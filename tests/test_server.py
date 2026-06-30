@@ -119,6 +119,30 @@ def test_mac_key_script(monkeypatch, combo, expected):
     assert seen[0] == f"tell application \"System Events\" to {expected}"
 
 
+def test_record_then_replay_roundtrip(monkeypatch, tmp_path):
+    """Full procedure-cache path: record a task, then task_begin replays it."""
+    import cv2
+    import numpy as np
+    png = cv2.imencode(".png", np.zeros((10, 10, 3), np.uint8))[1].tobytes()
+
+    monkeypatch.setattr(m, "_do", lambda a: None)            # don't touch a real screen
+    monkeypatch.setattr(m, "_grab_png", lambda: png)
+    # fingerprints in call order: record-start, record-step, replay-start, replay-verify
+    fps = iter([100, 200, 100, 200])
+    monkeypatch.setattr(m, "_try_grab_fp", lambda: next(fps))
+    monkeypatch.setattr(m, "_cache", m.TaskCache(tmp_path / "t.json"))
+    monkeypatch.setattr(m, "_recording_label", None)
+    monkeypatch.setattr(m, "_recorded", [])
+
+    assert "ecording" in m.task_begin("demo")                # new task -> records
+    m.computer_key("enter")                                  # one recorded step
+    assert "saved" in m.task_end()
+
+    res = m.task_begin("demo")                               # start matches -> replays
+    text = res[0] if isinstance(res, list) else res
+    assert "replayed" in text and "1 actions" in text
+
+
 @pytest.mark.parametrize("raw,expected", [
     (2, 2.0), (20, 10.0), (-5, 0.0), (0, 0.0), ("3", 3.0), (None, 1.0), ("x", 1.0),
 ])
