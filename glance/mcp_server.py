@@ -175,6 +175,21 @@ def _press_key(keys: str) -> None:
     pg.hotkey(*parts) if len(parts) > 1 else pg.press(parts[0])
 
 
+def _frontmost_app() -> str:
+    """Name of the frontmost (focused) app, via System Events. Never raises."""
+    if sys.platform != "darwin":
+        return "unknown (not macOS)"
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to get name of first '
+             'application process whose frontmost is true'],
+            capture_output=True, timeout=4, text=True)
+        return (r.stdout or "").strip() or "unknown"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return f"unknown ({e})"
+
+
 # --- one dispatcher used by both the live tools and replay ------------------
 
 def _clamp_wait(seconds) -> float:
@@ -257,6 +272,16 @@ def open_app(name: str) -> str:
         _recorded.append(Step(action=action, fingerprint=fingerprint(_grab_png())))
     log.info("open_app '%s' -> %s", name, "ok" if ok else msg)
     return msg
+
+
+@mcp.tool()
+def frontmost_app() -> str:
+    """Return the name of the frontmost (focused) app. Use it to CONFIRM an app
+    actually launched and came to the front (e.g. right after open_app), instead of
+    guessing from screenshots."""
+    name = _frontmost_app()
+    log.info("frontmost_app -> %s", name)
+    return name
 
 
 @mcp.tool()

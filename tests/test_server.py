@@ -95,6 +95,26 @@ def test_do_wait_sleeps_clamped(monkeypatch):
     assert slept == [10.0]      # clamped to the 10s ceiling
 
 
+def test_frontmost_app_parses_name(monkeypatch):
+    monkeypatch.setattr(m.sys, "platform", "darwin")
+    monkeypatch.setattr(m.subprocess, "run",
+                        lambda *a, **k: type("r", (), {"stdout": "Calculator\n"})())
+    assert m._frontmost_app() == "Calculator"
+
+
+def test_frontmost_app_handles_error(monkeypatch):
+    monkeypatch.setattr(m.sys, "platform", "darwin")
+    def boom(*a, **k):
+        raise OSError("nope")
+    monkeypatch.setattr(m.subprocess, "run", boom)
+    assert m._frontmost_app().startswith("unknown")
+
+
+def test_frontmost_app_non_darwin(monkeypatch):
+    monkeypatch.setattr(m.sys, "platform", "linux")
+    assert "not macOS" in m._frontmost_app()
+
+
 def test_open_app_action_survives_cache_roundtrip(tmp_path):
     from glance import Step, TaskCache
     steps = [Step(action={"action": "open_app", "name": "Calculator"}, fingerprint=7)]
