@@ -52,6 +52,19 @@ def test_screenshot_failure_returns_message(monkeypatch):
     assert "screenshot failed" in text and "no display" in text   # no crash
 
 
+def test_recording_survives_capture_failure(monkeypatch):
+    monkeypatch.setattr(m, "_recording_label", "t")
+    monkeypatch.setattr(m, "_recorded", [])
+    monkeypatch.setattr(m, "_do", lambda a: None)
+
+    def boom():
+        raise RuntimeError("no display")
+    monkeypatch.setattr(m, "_grab_png", boom)
+    m._act({"action": "key", "keys": "enter"})       # must not raise mid-recording
+    assert len(m._recorded) == 1
+    assert m._recorded[0].fingerprint == 0           # safe sentinel -> replay diverges here
+
+
 def test_task_begin_handles_capture_failure(monkeypatch):
     import asyncio
 

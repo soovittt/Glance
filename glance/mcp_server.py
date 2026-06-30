@@ -243,7 +243,9 @@ def _act(action: dict) -> None:
     _do(action)
     rec = _recording_label is not None
     if rec:
-        _recorded.append(Step(action=action, fingerprint=fingerprint(_grab_png())))
+        # fp=0 if capture fails: keeps the action in the sequence and makes replay
+        # safely diverge at this step rather than crashing the recording.
+        _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0))
     log.info("action %s%s", action, f"  [recording '{_recording_label}' step {len(_recorded)}]" if rec else "")
 
 
@@ -299,7 +301,7 @@ def open_app(name: str) -> str:
     except (subprocess.TimeoutExpired, OSError) as e:
         ok, msg = False, f"could not launch '{name}': {e}"
     if ok and _recording_label is not None:
-        _recorded.append(Step(action=action, fingerprint=fingerprint(_grab_png())))
+        _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0))
     log.info("open_app '%s' -> %s", name, "ok" if ok else msg)
     return msg
 
