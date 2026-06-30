@@ -37,7 +37,7 @@ from .observer import Observer
 from .policy import GlancePolicy
 
 _ENABLED = os.environ.get("GLANCE_DISABLED", "0") != "1"
-TARGET_W, TARGET_H = 1366, 768
+TARGET_W = 1366   # served screenshot width; height derived from real aspect (_target_hw)
 
 # Replay guards (out of 128 fingerprint bits). Lenient: catch GROSS drift (app didn't
 # open, wrong window), tolerate clocks/cursor/anti-aliasing.
@@ -45,9 +45,13 @@ START_DIVERGE_BITS = 22   # current screen vs where the procedure was recorded
 STEP_DIVERGE_BITS = 26    # each replayed step's result vs the recorded result
 REPLAY_SETTLE = 0.35
 
+# Repo root (next to this package). Defaults for the task cache + log live here so
+# they persist and are found regardless of where Claude Code launched the server.
+_REPO = Path(__file__).resolve().parent.parent
+
 mcp = FastMCP("glance-cua")
 _observer = Observer(GlancePolicy(enabled=_ENABLED))
-_cache = TaskCache(os.environ.get("GLANCE_TASK_FILE", ".glance_tasks.json"))
+_cache = TaskCache(os.environ.get("GLANCE_TASK_FILE", str(_REPO / ".glance_tasks.json")))
 
 
 def _setup_logging() -> tuple[logging.Logger, str]:
@@ -55,11 +59,10 @@ def _setup_logging() -> tuple[logging.Logger, str]:
     lg = logging.getLogger("glance-cua")
     lg.setLevel(logging.INFO)
     lg.propagate = False
-    # Default: a file inside the Glance repo (next to this package), so it's always
-    # in the project and easy to read later — regardless of where Claude Code
-    # launched the server from. Override with GLANCE_LOG. Appends across runs.
-    default = str(Path(__file__).resolve().parent.parent / "glance.log")
-    path = os.environ.get("GLANCE_LOG", default)
+    # Default: a file inside the Glance repo, so it's always in the project and easy
+    # to read later — regardless of where Claude Code launched the server from.
+    # Override with GLANCE_LOG. Appends across runs.
+    path = os.environ.get("GLANCE_LOG", str(_REPO / "glance.log"))
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S")
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -75,8 +78,8 @@ def _setup_logging() -> tuple[logging.Logger, str]:
 
 
 log, LOG_PATH = _setup_logging()
-log.info("=== glance-cua start | glance=%s target=%dx%d | %d cached task(s) | log=%s",
-         "on" if _ENABLED else "OFF", TARGET_W, TARGET_H, len(_cache), LOG_PATH)
+log.info("=== glance-cua start | glance=%s target_w=%d | %d cached task(s) | log=%s",
+         "on" if _ENABLED else "OFF", TARGET_W, len(_cache), LOG_PATH)
 
 # Recording state (set between task_begin on a new task and task_end).
 _recording_label: str | None = None
@@ -100,14 +103,23 @@ def _pyautogui():
     return _pg
 
 
+def _target_hw() -> tuple[int, int]:
+    """(width, height) for served screenshots — preserves the real screen aspect
+    ratio so the image isn't distorted (which would throw off click grounding)."""
+    _pyautogui()
+    sw, sh = _screen  # type: ignore[misc]
+    return TARGET_W, max(1, round(TARGET_W * sh / sw))
+
+
 def _to_screen(x: int, y: int) -> tuple[int, int]:
     _pyautogui()
     sw, sh = _screen  # type: ignore[misc]
-    return round(x * sw / TARGET_W), round(y * sh / TARGET_H)
+    tw, th = _target_hw()
+    return round(x * sw / tw), round(y * sh / th)
 
 
 def _grab_png() -> bytes:
-    shot = _pyautogui().screenshot().resize((TARGET_W, TARGET_H))
+    shot = _pyautogui().screenshot().resize(_target_hw())
     buf = io.BytesIO()
     shot.save(buf, format="PNG")
     return buf.getvalue()
@@ -165,6 +177,14 @@ def _press_key(keys: str) -> None:
 
 # --- one dispatcher used by both the live tools and replay ------------------
 
+def _clamp_wait(seconds) -> float:
+    """Clamp a wait to a sane [0, 10] s range; default 1s on bad input."""
+    try:
+        return max(0.0, min(float(seconds), 10.0))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _do(action: dict) -> None:
     """Execute a single normalized action dict on the machine."""
     a = action["action"]
@@ -183,6 +203,11 @@ def _do(action: dict) -> None:
         pg.moveTo(*_to_screen(action["x"], action["y"]))
         amt = int(action.get("amount", 3))
         pg.scroll(-amt * 100 if action.get("direction", "down") == "down" else amt * 100)
+    elif a == "open_app":
+        subprocess.run(["open", "-a", action["name"]], check=False,
+                       capture_output=True, timeout=10)
+    elif a == "wait":
+        time.sleep(_clamp_wait(action.get("seconds", 1.0)))
 
 
 def _act(action: dict) -> None:
@@ -216,8 +241,35 @@ def computer_screenshot(force: bool = False):
 
 
 @mcp.tool()
+def open_app(name: str) -> str:
+    """Launch a macOS app by name (e.g. 'Calculator', 'Safari', 'TextEdit'). PREFER
+    THIS to open apps — it runs `open -a` directly, which is far more reliable than
+    driving Spotlight by keyboard or clicking its icon."""
+    action = {"action": "open_app", "name": name}
+    try:
+        subprocess.run(["open", "-a", name], check=True, capture_output=True, timeout=10)
+        ok, msg = True, f"launched {name}"
+    except subprocess.CalledProcessError as e:
+        ok, msg = False, f"could not launch '{name}': {e.stderr.decode()[:160].strip()}"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        ok, msg = False, f"could not launch '{name}': {e}"
+    if ok and _recording_label is not None:
+        _recorded.append(Step(action=action, fingerprint=fingerprint(_grab_png())))
+    log.info("open_app '%s' -> %s", name, "ok" if ok else msg)
+    return msg
+
+
+@mcp.tool()
+def wait(seconds: float = 1.0) -> str:
+    """Wait for the UI to settle — e.g. after launching an app or triggering a load.
+    Capped at 10s. Use this instead of repeatedly screenshotting to 'check again'."""
+    _act({"action": "wait", "seconds": _clamp_wait(seconds)})
+    return f"waited {_clamp_wait(seconds):.1f}s"
+
+
+@mcp.tool()
 def computer_click(x: int, y: int, button: str = "left", double: bool = False) -> str:
-    """Click at (x, y) in the 1366x768 screenshot coordinate space."""
+    """Click at (x, y) in the served screenshot's coordinate space (1366 px wide)."""
     _act({"action": "click", "x": x, "y": y, "button": button, "double": double})
     return f"clicked {button} at ({x},{y})"
 
