@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # pyautogui is intentionally NOT installed: it's imported lazily and the tests
+      # mock it, so the suite runs headless without a display.
+      - name: Install
+        run: pip install -e ".[dev]" "mcp>=1.2"
+      - name: Test
+        run: pytest -q
