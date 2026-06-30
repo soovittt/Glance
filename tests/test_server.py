@@ -52,6 +52,17 @@ def test_screenshot_failure_returns_message(monkeypatch):
     assert "screenshot failed" in text and "no display" in text   # no crash
 
 
+def test_task_begin_handles_capture_failure(monkeypatch):
+    import asyncio
+
+    def boom():
+        raise RuntimeError("no display")
+    monkeypatch.setattr(m, "_grab_png", boom)
+    res = asyncio.run(m.mcp.call_tool("task_begin", {"label": "demo"}))
+    content = res[0] if isinstance(res, tuple) else res
+    assert "could not capture" in content[0].text     # no crash, clear message
+
+
 def test_do_open_app_runs_open_dash_a(monkeypatch):
     calls = []
     monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: calls.append(a[0]))

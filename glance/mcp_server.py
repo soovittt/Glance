@@ -125,6 +125,15 @@ def _grab_png() -> bytes:
     return buf.getvalue()
 
 
+def _try_grab_fp() -> int | None:
+    """Fingerprint the current screen, or None if capture fails (never raises)."""
+    try:
+        return fingerprint(_grab_png())
+    except Exception as e:  # noqa: BLE001 - capture can fail (permissions, transient)
+        log.warning("screen capture for fingerprint failed: %s", e)
+        return None
+
+
 # --- keyboard ---------------------------------------------------------------
 
 _KEYS = {  # pyautogui names (non-macOS fallback)
@@ -362,7 +371,11 @@ def _replay(proc):
     for i, step in enumerate(proc.steps, 1):
         _do(step.action)
         time.sleep(REPLAY_SETTLE)
-        dist = hamming(fingerprint(_grab_png()), step.fingerprint)
+        fp = _try_grab_fp()
+        if fp is None:
+            return (f"[task '{proc.label}'] aborted at step {i}: screen capture failed "
+                    f"during replay. Check Screen Recording permission.")
+        dist = hamming(fp, step.fingerprint)
         log.info("  replay step %d/%d %s verify=%dbits", i, len(proc.steps),
                  step.action, dist)
         if dist > STEP_DIVERGE_BITS:
@@ -373,10 +386,12 @@ def _replay(proc):
                     f"screenshot to see the current state and finish the task yourself.")
     dt = time.perf_counter() - t0
     log.info("REPLAY '%s' done: %d steps in %.1fs, 0 model calls", proc.label, len(proc.steps), dt)
-    png = _grab_png()
-    return [f"[task '{proc.label}'] replayed {len(proc.steps)} actions in {dt:.1f}s with "
-            f"zero model calls, all steps verified. Here is the final screen — read the "
-            f"result from it; the task is done.", Image(data=png, format="png")]
+    summary = (f"[task '{proc.label}'] replayed {len(proc.steps)} actions in {dt:.1f}s with "
+               f"zero model calls, all steps verified. The task is done.")
+    try:
+        return [summary + " Here is the final screen.", Image(data=_grab_png(), format="png")]
+    except Exception:  # noqa: BLE001 - text-only result if the final capture fails
+        return summary
 
 
 @mcp.tool()
@@ -389,7 +404,10 @@ def task_begin(label: str):
     starts recording: do the task normally with the computer_* tools, then call
     task_end to save it for next time."""
     global _recording_label, _recorded, _start_fp
-    cur_fp = fingerprint(_grab_png())
+    cur_fp = _try_grab_fp()
+    if cur_fp is None:
+        return ("[task] could not capture the screen to start the task — check macOS "
+                "Screen Recording permission, then try again.")
     proc = _cache.get(label)
     if proc is not None:
         start_dist = hamming(cur_fp, proc.start_fingerprint)
