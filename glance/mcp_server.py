@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP, Image
 
@@ -54,7 +55,11 @@ def _setup_logging() -> tuple[logging.Logger, str]:
     lg = logging.getLogger("glance-cua")
     lg.setLevel(logging.INFO)
     lg.propagate = False
-    path = os.environ.get("GLANCE_LOG", os.path.expanduser("~/.glance/glance.log"))
+    # Default: a file inside the Glance repo (next to this package), so it's always
+    # in the project and easy to read later — regardless of where Claude Code
+    # launched the server from. Override with GLANCE_LOG. Appends across runs.
+    default = str(Path(__file__).resolve().parent.parent / "glance.log")
+    path = os.environ.get("GLANCE_LOG", default)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S")
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
