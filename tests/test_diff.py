@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from glance import GlancePolicy, Observer, diff_frames, dhash, hamming
+from glance import GlancePolicy, Observer, dhash, diff_frames, hamming
 
 
 def _frame(color: int = 245) -> np.ndarray:

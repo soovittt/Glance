@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from glance import Step, TaskCache
 
-
 STEPS = [
     Step(action={"action": "key", "keys": "cmd+space"}, fingerprint=111),
     Step(action={"action": "type", "text": "Calculator"}, fingerprint=222),
