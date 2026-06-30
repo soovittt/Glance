@@ -34,6 +34,24 @@ def test_persists_across_instances(tmp_path):
     assert reloaded.steps[1].action["text"] == "Calculator"
 
 
+def test_corrupt_cache_file_does_not_crash(tmp_path):
+    path = tmp_path / "t.json"
+    path.write_text("{ this is not valid json ]")
+    cache = TaskCache(path)          # must not raise
+    assert len(cache) == 0
+
+
+def test_malformed_entry_is_skipped(tmp_path):
+    # outer key matches the normalized label, as save() writes it
+    path = tmp_path / "t.json"
+    path.write_text('{"good": {"label": "good", "start_fingerprint": 1, "steps": []}, '
+                    '"bad": {"label": "bad"}}')
+    cache = TaskCache(path)
+    assert cache.get("good") is not None     # valid entry loads
+    assert cache.get("bad") is None          # malformed entry (no start_fingerprint) skipped
+    assert len(cache) == 1
+
+
 def test_forget(tmp_path):
     c = TaskCache(tmp_path / "t.json")
     c.put("t", 0, STEPS)

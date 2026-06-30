@@ -47,12 +47,21 @@ class TaskCache:
             self._load()
 
     def _load(self) -> None:
-        for key, p in json.loads(self.path.read_text()).items():
-            self._procs[key] = Procedure(
-                label=p["label"],
-                start_fingerprint=p["start_fingerprint"],
-                steps=[Step(**s) for s in p["steps"]],
-            )
+        try:
+            raw = json.loads(self.path.read_text())
+        except (json.JSONDecodeError, OSError, ValueError):
+            return  # corrupt/unreadable cache -> start empty rather than crash the server
+        if not isinstance(raw, dict):
+            return
+        for key, p in raw.items():
+            try:
+                self._procs[key] = Procedure(
+                    label=p["label"],
+                    start_fingerprint=p["start_fingerprint"],
+                    steps=[Step(**s) for s in p["steps"]],
+                )
+            except (KeyError, TypeError):
+                continue  # skip a single malformed entry, keep the rest
 
     def save(self) -> None:
         raw = {k: asdict(p) for k, p in self._procs.items()}
