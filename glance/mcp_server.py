@@ -223,6 +223,10 @@ def _do(action: dict) -> None:
                        capture_output=True, timeout=10)
     elif a == "wait":
         time.sleep(_clamp_wait(action.get("seconds", 1.0)))
+    elif a == "drag":
+        pg = _pyautogui()
+        pg.moveTo(*_to_screen(action["x1"], action["y1"]))
+        pg.dragTo(*_to_screen(action["x2"], action["y2"]), button=action.get("button", "left"))
 
 
 def _act(action: dict) -> None:
@@ -325,6 +329,14 @@ def computer_scroll(x: int, y: int, direction: str = "down", amount: int = 3) ->
     """Scroll at (x, y). direction is 'up' or 'down'; amount is in notches."""
     _act({"action": "scroll", "x": x, "y": y, "direction": direction, "amount": amount})
     return f"scrolled {direction} {amount}"
+
+
+@mcp.tool()
+def computer_drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> str:
+    """Drag from (x1, y1) to (x2, y2) in the screenshot coordinate space — e.g. to
+    move a window, select text, or move a slider."""
+    _act({"action": "drag", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button})
+    return f"dragged ({x1},{y1})->({x2},{y2})"
 
 
 # --- procedure cache: record once, replay instantly -------------------------

@@ -95,6 +95,18 @@ def test_do_wait_sleeps_clamped(monkeypatch):
     assert slept == [10.0]      # clamped to the 10s ceiling
 
 
+def test_do_drag_scales_both_endpoints(monkeypatch, screen_1512x982):
+    moves, drags = [], []
+    fake = type("pg", (), {
+        "moveTo": staticmethod(lambda x, y: moves.append((x, y))),
+        "dragTo": staticmethod(lambda x, y, **k: drags.append((x, y))),
+    })()
+    monkeypatch.setattr(m, "_pyautogui", lambda: fake)
+    tw, th = m._target_hw()
+    m._do({"action": "drag", "x1": 0, "y1": 0, "x2": tw, "y2": th})
+    assert moves == [(0, 0)] and drags == [(1512, 982)]
+
+
 def test_frontmost_app_parses_name(monkeypatch):
     monkeypatch.setattr(m.sys, "platform", "darwin")
     monkeypatch.setattr(m.subprocess, "run",
