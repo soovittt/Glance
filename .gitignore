@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Glance artifacts
+bench/traces/
+.glance_tasks.json
+.glance_cache.json
+*.log
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

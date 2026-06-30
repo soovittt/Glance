@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy into your project's .mcp.json (or run the `claude mcp add` command in the README). Replace the python path with YOUR Glance venv python: run `echo $(pwd)/.venv/bin/python` inside the Glance repo.",
+  "mcpServers": {
+    "glance-cua": {
+      "command": "/ABSOLUTE/PATH/TO/Glance/.venv/bin/python",
+      "args": ["-m", "glance.mcp_server"]
+    }
+  }
+}
