@@ -88,6 +88,20 @@ def test_clamp_wait(raw, expected):
     assert m._clamp_wait(raw) == expected
 
 
+def test_safe_act_returns_error_instead_of_raising(monkeypatch):
+    def boom(_):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(m, "_do", boom)
+    out = m._safe_act({"action": "click", "x": 1, "y": 1}, "ok")
+    assert "failed" in out and "boom" in out      # no exception escapes the boundary
+
+
+def test_safe_act_returns_ok_on_success(monkeypatch):
+    monkeypatch.setattr(m, "_do", lambda a: None)
+    monkeypatch.setattr(m, "_recording_label", None)
+    assert m._safe_act({"action": "move", "x": 1, "y": 1}, "moved") == "moved"
+
+
 def test_do_wait_sleeps_clamped(monkeypatch):
     slept = []
     monkeypatch.setattr(m.time, "sleep", lambda s: slept.append(s))

@@ -238,6 +238,18 @@ def _act(action: dict) -> None:
     log.info("action %s%s", action, f"  [recording '{_recording_label}' step {len(_recorded)}]" if rec else "")
 
 
+def _safe_act(action: dict, ok_msg: str) -> str:
+    """Run an action at a tool boundary: on failure return a clear message instead of
+    crashing the tool, so the agent can recover. Broad except is deliberate here —
+    GUI control can raise many low-level errors and resilience beats propagation."""
+    try:
+        _act(action)
+        return ok_msg
+    except Exception as e:  # noqa: BLE001 - intentional control boundary
+        log.warning("action %s FAILED: %s", action, e)
+        return f"action failed ({action.get('action')}): {e}"
+
+
 # --- live computer-use tools ------------------------------------------------
 
 @mcp.tool()
@@ -292,51 +304,48 @@ def frontmost_app() -> str:
 def wait(seconds: float = 1.0) -> str:
     """Wait for the UI to settle — e.g. after launching an app or triggering a load.
     Capped at 10s. Use this instead of repeatedly screenshotting to 'check again'."""
-    _act({"action": "wait", "seconds": _clamp_wait(seconds)})
-    return f"waited {_clamp_wait(seconds):.1f}s"
+    s = _clamp_wait(seconds)
+    return _safe_act({"action": "wait", "seconds": s}, f"waited {s:.1f}s")
 
 
 @mcp.tool()
 def computer_click(x: int, y: int, button: str = "left", double: bool = False) -> str:
     """Click at (x, y) in the served screenshot's coordinate space (1366 px wide)."""
-    _act({"action": "click", "x": x, "y": y, "button": button, "double": double})
-    return f"clicked {button} at ({x},{y})"
+    return _safe_act({"action": "click", "x": x, "y": y, "button": button, "double": double},
+                     f"clicked {button} at ({x},{y})")
 
 
 @mcp.tool()
 def computer_move(x: int, y: int) -> str:
     """Move the mouse to (x, y) in the screenshot coordinate space."""
-    _act({"action": "move", "x": x, "y": y})
-    return f"moved to ({x},{y})"
+    return _safe_act({"action": "move", "x": x, "y": y}, f"moved to ({x},{y})")
 
 
 @mcp.tool()
 def computer_type(text: str) -> str:
     """Type text at the current focus."""
-    _act({"action": "type", "text": text})
-    return f"typed {len(text)} chars"
+    return _safe_act({"action": "type", "text": text}, f"typed {len(text)} chars")
 
 
 @mcp.tool()
 def computer_key(keys: str) -> str:
     """Press a key or combo, e.g. 'enter', 'cmd+space', 'cmd+c', 'ctrl+shift+t'."""
-    _act({"action": "key", "keys": keys})
-    return f"pressed {keys}"
+    return _safe_act({"action": "key", "keys": keys}, f"pressed {keys}")
 
 
 @mcp.tool()
 def computer_scroll(x: int, y: int, direction: str = "down", amount: int = 3) -> str:
     """Scroll at (x, y). direction is 'up' or 'down'; amount is in notches."""
-    _act({"action": "scroll", "x": x, "y": y, "direction": direction, "amount": amount})
-    return f"scrolled {direction} {amount}"
+    return _safe_act({"action": "scroll", "x": x, "y": y, "direction": direction, "amount": amount},
+                     f"scrolled {direction} {amount}")
 
 
 @mcp.tool()
 def computer_drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> str:
     """Drag from (x1, y1) to (x2, y2) in the screenshot coordinate space — e.g. to
     move a window, select text, or move a slider."""
-    _act({"action": "drag", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button})
-    return f"dragged ({x1},{y1})->({x2},{y2})"
+    return _safe_act({"action": "drag", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button},
+                     f"dragged ({x1},{y1})->({x2},{y2})")
 
 
 # --- procedure cache: record once, replay instantly -------------------------
