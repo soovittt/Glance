@@ -45,13 +45,28 @@ claude mcp add glance-cua -- "$(pwd)/.venv/bin/python" -m glance.mcp_server
 ```
 
 Then in Claude Code: grant macOS **Accessibility + Screen Recording** permission the
-first time, and ask it to do a desktop task. It drives the machine via the
-`computer_click` / `computer_type` / `computer_screenshot` tools; Glance silently
-skips the screenshots that didn't change. Call the `glance_stats` tool any time to
-see how many it skipped and the tokens saved.
+first time, and ask it to do a desktop task. Glance silently skips the screenshots
+that didn't change. Call the `glance_stats` tool any time to see the savings.
 
 > Heavy apps work because it's your *actual* desktop — not a browser sandbox. Use a
 > throwaway user/VM if you don't want the agent touching real files.
+
+### Tools the server exposes
+
+| Tool | What it does |
+|---|---|
+| `computer_screenshot` | capture the screen (skipped → text note when unchanged) |
+| `computer_click` / `computer_move` / `computer_drag` | mouse: click, move, drag |
+| `computer_type` / `computer_key` | keyboard: type text, press a combo (e.g. `cmd+space`) |
+| `computer_scroll` | scroll at a point |
+| `open_app` | launch an app via `open -a` — **reliable**, no Spotlight fumbling |
+| `wait` | pause for the UI to settle (capped 10s) |
+| `frontmost_app` | name of the focused app — confirm a launch worked |
+| `task_begin` / `task_end` | record a task once; replay it instantly next time |
+| `glance_stats` / `glance_log` | savings + cached tasks; tail the log |
+
+Coordinates are in a 1366-px-wide space that preserves your screen's aspect ratio,
+so clicks land accurately on any monitor.
 
 ### Tracking what it does (logging)
 
