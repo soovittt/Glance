@@ -112,6 +112,21 @@ def make_dataset(per_kind: int = 10) -> list[Pair]:
                     1.2, (230, 230, 230), 2, cv2.LINE_AA)
         pairs.append(Pair(base, nav, True, "page_nav"))
 
+        # notification badge count 1 -> 2: small but a REAL change, must be sent
+        ba, bb = base.copy(), base.copy()
+        bx, by = RNG.randint(900, 1100), 70
+        cv2.circle(ba, (bx, by), 13, (0,), -1)
+        cv2.circle(bb, (bx, by), 13, (0,), -1)
+        cv2.putText(ba, "1", (bx - 6, by + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,), 2, cv2.LINE_AA)
+        cv2.putText(bb, "2", (bx - 6, by + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,), 2, cv2.LINE_AA)
+        pairs.append(Pair(ba, bb, True, "badge_count"))
+
+        # a small status dot appears (e.g. an online indicator) — small REAL change
+        da, db = base.copy(), base.copy()
+        dx, dy = RNG.randint(200, 1000), RNG.randint(400, 600)
+        cv2.circle(db, (dx, dy), 7, (0,), -1)
+        pairs.append(Pair(da, db, True, "status_dot"))
+
     return pairs
 
 

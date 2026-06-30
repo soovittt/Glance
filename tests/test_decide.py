@@ -50,3 +50,22 @@ def test_two_chars_not_mistaken_for_cursor_move():
     cv2.putText(typed, "XY", (250, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (20,), 1, cv2.LINE_AA)
     changed, _ = is_meaningful_change(base, typed, POLICY)
     assert changed is True, "two dark blobs are text, not a cursor move"
+
+
+def test_status_dot_appearing_is_sent():
+    base = _page()
+    dot = base.copy()
+    cv2.circle(dot, (400, 300), 7, (0,), -1)        # a small online/status indicator
+    changed, _ = is_meaningful_change(base, dot, POLICY)
+    assert changed is True, "a small real change must not be suppressed"
+
+
+def test_badge_count_change_is_sent():
+    base = _page()
+    a, b = base.copy(), base.copy()
+    cv2.circle(a, (1000, 70), 13, (0,), -1)
+    cv2.circle(b, (1000, 70), 13, (0,), -1)
+    cv2.putText(a, "1", (994, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,), 2, cv2.LINE_AA)
+    cv2.putText(b, "2", (994, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,), 2, cv2.LINE_AA)
+    changed, _ = is_meaningful_change(a, b, POLICY)
+    assert changed is True, "a digit change in a badge is a real change"
