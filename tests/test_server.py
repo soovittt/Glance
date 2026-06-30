@@ -109,6 +109,8 @@ def test_coordinate_corners_across_aspect_ratios(monkeypatch, sw, sh):
     ("cmd+shift+4", 'keystroke "4" using {command down, shift down}'),
     ("cmd+option+esc", "key code 53 using {command down, option down}"),
     ("enter", "key code 36"),
+    ("f5", "key code 96"),                                   # function key, not text
+    ("cmd+f3", "key code 99 using {command down}"),
 ])
 def test_mac_key_script(monkeypatch, combo, expected):
     seen = []
