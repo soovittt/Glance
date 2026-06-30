@@ -40,6 +40,18 @@ def test_coordinate_center_is_screen_center(screen_1512x982):
     assert abs(cx - sw / 2) <= 2 and abs(cy - sh / 2) <= 2
 
 
+def test_screenshot_failure_returns_message(monkeypatch):
+    import asyncio
+
+    def boom():
+        raise RuntimeError("no display")
+    monkeypatch.setattr(m, "_grab_png", boom)
+    res = asyncio.run(m.mcp.call_tool("computer_screenshot", {}))
+    content = res[0] if isinstance(res, tuple) else res
+    text = content[0].text
+    assert "screenshot failed" in text and "no display" in text   # no crash
+
+
 def test_do_open_app_runs_open_dash_a(monkeypatch):
     calls = []
     monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: calls.append(a[0]))

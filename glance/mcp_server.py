@@ -257,7 +257,12 @@ def computer_screenshot(force: bool = False):
     """Capture the screen. Returns the image, OR a short 'no change' note if it's
     identical to what you last saw (saves tokens; also reliable signal that your last
     action had no visible effect). Pass force=True to always get the pixels."""
-    png = _grab_png()
+    try:
+        png = _grab_png()
+    except Exception as e:  # noqa: BLE001 - capture can fail (permissions, transient)
+        log.warning("screenshot FAILED: %s", e)
+        return (f"[glance] screenshot failed: {e}. Check that the app running this "
+                f"server has macOS Screen Recording permission, then try again.")
     obs = _observer.observe(png, force=force)
     s = _observer.stats
     log.info("screenshot %-4s changed=%5.2f%% img=%4dtok | session: %d/%d skipped, "
