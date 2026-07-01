@@ -243,3 +243,122 @@ def test_open_app_action_survives_cache_roundtrip(tmp_path):
     TaskCache(tmp_path / "t.json").put("calc", 0, steps)
     got = TaskCache(tmp_path / "t.json").get("calc")
     assert got.steps[0].action == {"action": "open_app", "name": "Calculator"}
+
+
+# --- accessibility-anchored replay (Fix #2) ---------------------------------
+
+_ELS = [
+    {"role": "Button", "name": "=", "tx": 100, "ty": 200, "sx": 111, "sy": 222},
+    {"role": "Button", "name": "7", "tx": 300, "ty": 400, "sx": 333, "sy": 444},
+]
+
+
+def test_anchor_for_click_picks_nearest_within_radius():
+    assert m._anchor_for_click(110, 205, _ELS) == {"role": "Button", "name": "="}
+
+
+def test_anchor_for_click_none_when_click_hits_empty_space():
+    assert m._anchor_for_click(900, 900, _ELS) is None      # beyond ANCHOR_RADIUS
+
+
+def test_resolve_anchor_exact_match(monkeypatch):
+    monkeypatch.setattr(m, "_ui_elements",
+                        lambda: [{"role": "Button", "name": "7", "sx": 9, "sy": 8, "tx": 1, "ty": 1}])
+    assert m._resolve_anchor({"role": "Button", "name": "7"}) == (9, 8)
+
+
+def test_resolve_anchor_fuzzy_fallback(monkeypatch):
+    # Recorded name '=' now reads '= equals' — exact fails, same-role substring matches.
+    monkeypatch.setattr(m, "_ui_elements",
+                        lambda: [{"role": "Button", "name": "= equals", "sx": 50, "sy": 60,
+                                  "tx": 5, "ty": 6}])
+    assert m._resolve_anchor({"role": "Button", "name": "="}) == (50, 60)
+
+
+def test_resolve_anchor_none_when_gone(monkeypatch):
+    monkeypatch.setattr(m, "_ui_elements", lambda: [])
+    assert m._resolve_anchor({"role": "Button", "name": "7"}) is None
+
+
+def test_do_step_anchored_click_uses_live_position(monkeypatch):
+    """The point of the fix: an anchored click goes to where the element IS now."""
+    clicked = {}
+    fake = type("pg", (), {"click": staticmethod(lambda x, y, **k: clicked.update(x=x, y=y))})()
+    monkeypatch.setattr(m, "_pyautogui", lambda: fake)
+    # Element recorded at coord (100,200) now lives at screen (999,888).
+    monkeypatch.setattr(m, "_ui_elements",
+                        lambda: [{"role": "Button", "name": "=", "sx": 999, "sy": 888,
+                                  "tx": 10, "ty": 20}])
+    step = m.Step(action={"action": "click", "x": 100, "y": 200}, fingerprint=0,
+                  anchor={"role": "Button", "name": "="})
+    assert m._do_step(step) == "anchor"
+    assert (clicked["x"], clicked["y"]) == (999, 888)       # live position, not stale coord
+
+
+def test_do_step_falls_back_to_coord_when_anchor_unresolved(monkeypatch):
+    done = []
+    monkeypatch.setattr(m, "_ui_elements", lambda: [])       # element gone
+    monkeypatch.setattr(m, "_do", lambda a: done.append(a))
+    step = m.Step(action={"action": "click", "x": 7, "y": 8}, fingerprint=0,
+                  anchor={"role": "Button", "name": "gone"})
+    assert m._do_step(step) == "coord"
+    assert done == [{"action": "click", "x": 7, "y": 8}]     # recorded coord, via _do
+
+
+def test_do_step_non_click_ignores_anchor(monkeypatch):
+    done = []
+    monkeypatch.setattr(m, "_do", lambda a: done.append(a))
+    step = m.Step(action={"action": "key", "keys": "enter"}, fingerprint=0)
+    assert m._do_step(step) == "coord"
+    assert done == [{"action": "key", "keys": "enter"}]
+
+
+def test_anchor_survives_cache_roundtrip(tmp_path):
+    from glance import Step, TaskCache
+    steps = [Step(action={"action": "click", "x": 1, "y": 2}, fingerprint=3,
+                  anchor={"role": "Button", "name": "="})]
+    TaskCache(tmp_path / "t.json").put("calc", 0, steps)
+    got = TaskCache(tmp_path / "t.json").get("calc")
+    assert got.steps[0].anchor == {"role": "Button", "name": "="}
+
+
+def test_legacy_step_without_anchor_loads(tmp_path):
+    """A .glance_tasks.json written before Fix #2 has no 'anchor' key — must still load."""
+    import json
+    p = tmp_path / "t.json"
+    p.write_text(json.dumps({"calc": {"label": "calc", "start_fingerprint": 0, "steps": [
+        {"action": {"action": "click", "x": 1, "y": 2}, "fingerprint": 5}]}}))
+    from glance import TaskCache
+    got = TaskCache(p).get("calc")
+    assert got.steps[0].anchor is None                       # defaulted, no crash
+
+
+def test_record_click_then_replay_follows_moved_element(monkeypatch, tmp_path, screen_1512x982):
+    """End-to-end: record an anchored click, then replay after the element moved."""
+    import cv2
+    import numpy as np
+    png = cv2.imencode(".png", np.zeros((10, 10, 3), np.uint8))[1].tobytes()
+    monkeypatch.setattr(m, "_grab_png", lambda: png)
+    fps = iter([100, 200, 100, 200])   # rec-start, rec-step, replay-start, replay-verify
+    monkeypatch.setattr(m, "_try_grab_fp", lambda: next(fps))
+    monkeypatch.setattr(m, "_cache", m.TaskCache(tmp_path / "t.json"))
+    monkeypatch.setattr(m, "_recording_label", None)
+    monkeypatch.setattr(m, "_recorded", [])
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    clicks = []
+    fake = type("pg", (), {"click": staticmethod(lambda x, y, **k: clicks.append((x, y)))})()
+    monkeypatch.setattr(m, "_pyautogui", lambda: fake)
+
+    monkeypatch.setattr(m, "_ui_elements",
+                        lambda: [{"role": "Button", "name": "=", "tx": 100, "ty": 200,
+                                  "sx": 100, "sy": 200}])
+    m.task_begin("calc")                 # records, start fp 100
+    m.computer_click(100, 200)           # anchored to '='
+    m.task_end()
+
+    # Same task, but '=' now lives at screen (900,800).
+    monkeypatch.setattr(m, "_ui_elements",
+                        lambda: [{"role": "Button", "name": "=", "tx": 10, "ty": 20,
+                                  "sx": 900, "sy": 800}])
+    m.task_begin("calc")                 # start matches -> replay
+    assert clicks[-1] == (900, 800)      # replay clicked the MOVED element

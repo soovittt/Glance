@@ -23,6 +23,11 @@ from typing import Any
 class Step:
     action: dict[str, Any]   # normalized action, e.g. {"action":"click","x":10,"y":20}
     fingerprint: int         # 128-bit perceptual hash of the screen AFTER the action
+    # Accessibility identity of a clicked element, e.g. {"role":"Button","name":"="}.
+    # Recorded so replay can re-find the target by WHAT it is, not the pixel WHERE it
+    # was — the click survives the window having moved. None for non-clicks or when the
+    # app exposes no element there (replay then falls back to the raw coordinate).
+    anchor: dict[str, Any] | None = None
 
 
 @dataclass

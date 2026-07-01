@@ -47,6 +47,8 @@ TARGET_W = 1366   # served screenshot width; height derived from real aspect (_t
 START_DIVERGE_BITS = 22   # current screen vs where the procedure was recorded
 STEP_DIVERGE_BITS = 26    # each replayed step's result vs the recorded result
 REPLAY_SETTLE = 0.35
+ANCHOR_RADIUS = 40        # px in screenshot space: a click within this of an element's
+                          # center is anchored to it, so replay can re-find it if moved.
 
 # Repo root (next to this package). Defaults for the task cache + log live here so
 # they persist and are found regardless of where Claude Code launched the server.
@@ -276,6 +278,40 @@ def _ui_elements() -> list[dict]:
     return _parse_ui_output(r.stdout, _screen or (0, 0), _target_hw())
 
 
+# --- accessibility anchoring: record WHAT was clicked, not just WHERE -------
+
+def _anchor_for_click(x: int, y: int, els: list[dict] | None = None) -> dict | None:
+    """The accessibility element a screenshot-space click landed on (role + name), or
+    None if the app exposes no element near the point. Recorded at capture time so that
+    replay can re-find the target by identity instead of trusting a stale coordinate.
+    Pass `els` to reuse an already-fetched tree (one osascript call instead of two)."""
+    els = _ui_elements() if els is None else els
+    if not els:
+        return None
+    best = min(els, key=lambda e: (e["tx"] - x) ** 2 + (e["ty"] - y) ** 2)
+    if (best["tx"] - x) ** 2 + (best["ty"] - y) ** 2 <= ANCHOR_RADIUS ** 2:
+        return {"role": best["role"], "name": best["name"]}
+    return None  # click hit empty space (canvas/whitespace) — no stable element to anchor
+
+
+def _resolve_anchor(anchor: dict) -> tuple[int, int] | None:
+    """Live SCREEN coordinates of a recorded element, matched by role then name. Exact
+    (role AND name) first; then a same-role name-substring fallback for labels that
+    reflow (e.g. a button relabeled 'Total: $4.82'). None if the element is gone —
+    the caller then falls back to the recorded pixel coordinate."""
+    role, name = anchor.get("role"), anchor.get("name")
+    els = _ui_elements()
+    exact = next((e for e in els if e["role"] == role and e["name"] == name), None)
+    if exact is not None:
+        return exact["sx"], exact["sy"]
+    if name:
+        fuzzy = next((e for e in els
+                      if e["role"] == role and name.lower() in e["name"].lower()), None)
+        if fuzzy is not None:
+            return fuzzy["sx"], fuzzy["sy"]
+    return None
+
+
 # --- one dispatcher used by both the live tools and replay ------------------
 
 def _clamp_wait(seconds) -> float:
@@ -317,12 +353,15 @@ def _do(action: dict) -> None:
 
 def _act(action: dict) -> None:
     """Run a model-issued action; if a task is recording, append it to the procedure."""
-    _do(action)
     rec = _recording_label is not None
+    # Resolve the click's anchor against the PRE-click UI — the click may change it.
+    anchor = (_anchor_for_click(action["x"], action["y"])
+              if rec and action.get("action") == "click" else None)
+    _do(action)
     if rec:
         # fp=0 if capture fails: keeps the action in the sequence and makes replay
         # safely diverge at this step rather than crashing the recording.
-        _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0))
+        _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0, anchor=anchor))
     log.info("action %s%s", action, f"  [recording '{_recording_label}' step {len(_recorded)}]" if rec else "")
 
 
@@ -472,8 +511,10 @@ def _click_element(name: str) -> dict | None:
     if match is not None:
         _pyautogui().click(match["sx"], match["sy"])
         if _recording_label is not None:
+            # This click came FROM the tree, so we know the element exactly — anchor it.
             _recorded.append(Step(action={"action": "click", "x": match["tx"], "y": match["ty"]},
-                                  fingerprint=_try_grab_fp() or 0))
+                                  fingerprint=_try_grab_fp() or 0,
+                                  anchor={"role": match["role"], "name": match["name"]}))
     return match
 
 
@@ -526,6 +567,9 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
     t0 = time.perf_counter()
     prev = _grab_png()
     for i, a in enumerate(actions, 1):
+        # Anchor a recorded click against the PRE-click UI (see _act for why).
+        anchor = (_anchor_for_click(a["x"], a["y"])
+                  if _recording_label is not None and a.get("action") == "click" else None)
         try:
             _do(a)
         except Exception as e:  # noqa: BLE001 - report and stop, don't crash the tool
@@ -534,7 +578,7 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
         time.sleep(REPLAY_SETTLE)
         cur = _grab_png()
         if _recording_label is not None:
-            _recorded.append(Step(action=a, fingerprint=fingerprint(cur)))
+            _recorded.append(Step(action=a, fingerprint=fingerprint(cur), anchor=anchor))
         if verify:
             frac = diff_frames(to_gray(prev), to_gray(cur)).changed_fraction
             steps.append(f"{i}. {a.get('action')}: screen changed {frac * 100:.1f}%")
@@ -553,20 +597,36 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
 
 # --- procedure cache: record once, replay instantly -------------------------
 
+def _do_step(step: Step) -> str:
+    """Execute a recorded step during replay. For an anchored click, re-find the
+    element live and click its CURRENT position (robust to the window having moved
+    since recording); fall back to the recorded coordinate if the element can't be
+    located. Returns the path taken ('anchor' | 'coord') for the log."""
+    action = step.action
+    if action.get("action") == "click" and step.anchor:
+        pos = _resolve_anchor(step.anchor)
+        if pos is not None:
+            _pyautogui().click(*pos, button=action.get("button", "left"),
+                               clicks=2 if action.get("double") else 1)
+            return "anchor"
+    _do(action)
+    return "coord"
+
+
 def _replay(proc):
     """Replay a recorded procedure locally, verifying each step. Returns content."""
     log.info("REPLAY '%s' (%d steps) — no model calls", proc.label, len(proc.steps))
     t0 = time.perf_counter()
     for i, step in enumerate(proc.steps, 1):
-        _do(step.action)
+        via = _do_step(step)
         time.sleep(REPLAY_SETTLE)
         fp = _try_grab_fp()
         if fp is None:
             return (f"[task '{proc.label}'] aborted at step {i}: screen capture failed "
                     f"during replay. Check Screen Recording permission.")
         dist = hamming(fp, step.fingerprint)
-        log.info("  replay step %d/%d %s verify=%dbits", i, len(proc.steps),
-                 step.action, dist)
+        log.info("  replay step %d/%d %s via=%s verify=%dbits", i, len(proc.steps),
+                 step.action, via, dist)
         if dist > STEP_DIVERGE_BITS:
             log.warning("REPLAY '%s' DIVERGED at step %d (%d bits) — aborting to model",
                         proc.label, i, dist)
