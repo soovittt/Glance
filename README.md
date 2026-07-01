@@ -66,6 +66,7 @@ that didn't change. Call the `glance_stats` tool any time to see the savings.
 | `click_element` / `type_into` | act on an element **by name** via the accessibility tree — no pixel hunting, no screenshot |
 | `computer_batch` | run a **sequence of actions in one call** (no model round-trip between them), one screenshot at the end — collapses the 1-screenshot-1-action loop |
 | `task_begin` / `task_end` | record a task once; replay it instantly next time |
+| `session_report` | **cross-tool observability** — screenshots vs ui_tree vs batches, tokens by modality, round-trips saved, % vs a naive loop |
 | `glance_stats` / `glance_log` | savings + cached tasks; tail the log |
 
 Coordinates are in a 1366-px-wide space that preserves your screen's aspect ratio,

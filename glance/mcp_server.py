@@ -32,8 +32,10 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
+from . import telemetry
 from .cache import Step, TaskCache
 from .diff import diff_frames, fingerprint, hamming, to_gray
+from .metrics import estimate_image_tokens
 from .observer import Observer
 from .policy import GlancePolicy
 
@@ -355,6 +357,9 @@ def computer_screenshot(force: bool = False):
              "saved %d tok (%.0f%%)",
              "SKIP" if obs.skipped else "SEND", obs.changed_fraction * 100, obs.image_tokens,
              s.frames_skipped, s.frames_total, s.tokens_saved, s.pct_saved)
+    telemetry.emit(tool="computer_screenshot", modality="image",
+                   event="skip" if obs.skipped else "send",
+                   est_tokens=obs.image_tokens, changed_fraction=round(obs.changed_fraction, 6))
     if obs.skipped:
         return ("[glance] No visual change since the last screenshot you saw. The "
                 "screen is identical — if your last action was meant to change "
@@ -454,8 +459,22 @@ def ui_tree(limit: int = 60) -> str:
                 "this app exposes none) — fall back to computer_screenshot.")
     lines = [f'[{e["role"]} "{e["name"]}"] @({e["tx"]},{e["ty"]})' for e in els[:limit]]
     extra = f"\n... (+{len(els) - limit} more; raise limit)" if len(els) > limit else ""
+    text = f"{len(els)} UI elements in the frontmost app:\n" + "\n".join(lines) + extra
     log.info("ui_tree -> %d elements", len(els))
-    return f"{len(els)} UI elements in the frontmost app:\n" + "\n".join(lines) + extra
+    telemetry.emit(tool="ui_tree", modality="text", n_elements=len(els),
+                   est_tokens=max(1, len(text) // 4))
+    return text
+
+
+def _click_element(name: str) -> dict | None:
+    """Locate and click a named element; return the matched element (or None)."""
+    match = next((e for e in _ui_elements() if name.lower() in e["name"].lower()), None)
+    if match is not None:
+        _pyautogui().click(match["sx"], match["sy"])
+        if _recording_label is not None:
+            _recorded.append(Step(action={"action": "click", "x": match["tx"], "y": match["ty"]},
+                                  fingerprint=_try_grab_fp() or 0))
+    return match
 
 
 @mcp.tool()
@@ -463,14 +482,11 @@ def click_element(name: str) -> str:
     """Click the first UI element whose name matches `name` (case-insensitive) via the
     accessibility tree — no pixel hunting, no screenshot needed. Reliable where clicks
     by coordinate miss. Call ui_tree first to see the names."""
-    els = _ui_elements()
-    match = next((e for e in els if name.lower() in e["name"].lower()), None)
-    if not match:
+    match = _click_element(name)
+    telemetry.emit(tool="click_element", modality="action", matched=match is not None,
+                   est_tokens=8, avoided_screenshot=True)
+    if match is None:
         return f"no UI element matching '{name}'. Call ui_tree to see available elements."
-    _pyautogui().click(match["sx"], match["sy"])
-    if _recording_label is not None:
-        _recorded.append(Step(action={"action": "click", "x": match["tx"], "y": match["ty"]},
-                              fingerprint=_try_grab_fp() or 0))
     log.info("click_element %r -> %r @(%d,%d)", name, match["name"], match["tx"], match["ty"])
     return f"clicked '{match['name']}' ({match['role']}) at ({match['tx']},{match['ty']})"
 
@@ -479,9 +495,11 @@ def click_element(name: str) -> str:
 def type_into(name: str, text: str) -> str:
     """Focus the element named `name` (via the accessibility tree) and type `text`
     into it — one call instead of screenshot -> locate -> click -> type."""
-    r = click_element(name)
-    if r.startswith("no UI element"):
-        return r
+    match = _click_element(name)
+    telemetry.emit(tool="type_into", modality="action", matched=match is not None,
+                   est_tokens=8, avoided_screenshot=True)
+    if match is None:
+        return f"no UI element matching '{name}'. Call ui_tree to see available elements."
     time.sleep(0.15)
     _pyautogui().write(text, interval=0.01)
     return f"typed {len(text)} chars into '{name}'"
@@ -525,6 +543,9 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
         prev = cur
     dt = time.perf_counter() - t0
     log.info("computer_batch: %d/%d actions in %.1fs", len(steps), len(actions), dt)
+    telemetry.emit(tool="computer_batch", modality="batch", n_actions=len(actions),
+                   n_ran=len(steps), round_trips_saved=max(0, len(steps) - 1),
+                   est_tokens=estimate_image_tokens(*_target_hw()), duration_ms=round(dt * 1000))
     summary = (f"batch: ran {len(steps)}/{len(actions)} action(s) in {dt:.1f}s in one turn.\n"
                + "\n".join(steps) + "\nFinal screen:")
     return [summary, Image(data=prev, format="png")]
@@ -618,6 +639,15 @@ def task_list() -> str:
 def task_forget(label: str) -> str:
     """Delete a saved task (e.g. if the UI changed and its replay no longer works)."""
     return f"forgot '{label}'" if _cache.forget(label) else f"no saved task '{label}'"
+
+
+@mcp.tool()
+def session_report() -> str:
+    """Efficiency observability across ALL tools this session: screenshots vs ui_tree
+    vs batches, estimated tokens by modality, model round-trips saved by batching, and
+    overall % fewer tokens than a naive 1-screenshot-per-action loop. Call this to see
+    what mix of tools is actually efficient."""
+    return telemetry.summarize(telemetry.load())
 
 
 @mcp.tool()
