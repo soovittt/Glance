@@ -119,6 +119,40 @@ def test_mac_key_script(monkeypatch, combo, expected):
     assert seen[0] == f"tell application \"System Events\" to {expected}"
 
 
+def test_parse_ui_output_maps_and_filters(monkeypatch):
+    raw = ("AXButton\t7\t100\t200\t50\t50\n"        # kept
+           "AXStaticText\t\t0\t0\t10\t10\n"          # dropped: no name
+           "AXWindow\twin\t0\t0\t1512\t982\n")       # dropped: whole-window
+    els = m._parse_ui_output(raw, (1512, 982), (1366, 887))
+    assert len(els) == 1
+    e = els[0]
+    assert e["role"] == "Button" and e["name"] == "7"
+    assert (e["sx"], e["sy"]) == (125, 225)                       # screen-point center
+    assert e["tx"] == round(125 * 1366 / 1512)                    # mapped to screenshot space
+    assert e["ty"] == round(225 * 887 / 982)
+
+
+def test_computer_batch_runs_all_actions_in_one_call(monkeypatch):
+    import asyncio
+
+    import cv2
+    import numpy as np
+    png = cv2.imencode(".png", np.zeros((10, 10, 3), np.uint8))[1].tobytes()
+    calls = []
+    monkeypatch.setattr(m, "_do", lambda a: calls.append(a["action"]))
+    monkeypatch.setattr(m, "_grab_png", lambda: png)
+    monkeypatch.setattr(m, "_recording_label", None)
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+
+    acts = [{"action": "click", "x": 1, "y": 2}, {"action": "type", "text": "hi"},
+            {"action": "key", "keys": "enter"}]
+    res = asyncio.run(m.mcp.call_tool("computer_batch", {"actions": acts}))
+    content = res[0] if isinstance(res, tuple) else res
+    assert calls == ["click", "type", "key"]                      # all ran, one call
+    kinds = [type(c).__name__ for c in content]
+    assert "TextContent" in kinds and "ImageContent" in kinds     # summary + final screen
+
+
 def test_record_then_replay_roundtrip(monkeypatch, tmp_path):
     """Full procedure-cache path: record a task, then task_begin replays it."""
     import cv2

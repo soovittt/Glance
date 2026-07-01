@@ -28,11 +28,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
 from .cache import Step, TaskCache
-from .diff import fingerprint, hamming
+from .diff import diff_frames, fingerprint, hamming, to_gray
 from .observer import Observer
 from .policy import GlancePolicy
 
@@ -202,6 +203,77 @@ def _frontmost_app() -> str:
         return f"unknown ({e})"
 
 
+# --- accessibility tree: structured, screenshot-free observation ------------
+
+_UI_SCRIPT = r'''
+set output to ""
+tell application "System Events"
+  set frontApp to first application process whose frontmost is true
+  tell frontApp
+    try
+      set els to entire contents of front window
+    on error
+      set els to {}
+    end try
+    repeat with e in els
+      try
+        set p to position of e
+        set s to size of e
+        set output to output & (role of e) & tab & (name of e) & tab
+        set output to output & (item 1 of p) & tab & (item 2 of p) & tab
+        set output to output & (item 1 of s) & tab & (item 2 of s) & linefeed
+      end try
+    end repeat
+  end tell
+end tell
+return output
+'''
+
+
+def _parse_ui_output(raw: str, screen: tuple[int, int], target: tuple[int, int]) -> list[dict]:
+    """Parse the tab-delimited osascript dump into elements with mapped coordinates.
+
+    Keeps only named elements, drops whole-window containers, and maps each element's
+    center from screen points into the served screenshot coordinate space.
+    """
+    sw, sh = screen
+    tw, th = target
+    els: list[dict] = []
+    for line in (raw or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        role, name, xs, ys, ws, hs = parts[:6]
+        name = name.strip()
+        if not name:
+            continue
+        try:
+            x, y, w, h = int(xs), int(ys), int(ws), int(hs)
+        except ValueError:
+            continue
+        if sw and sh and w >= sw * 0.9 and h >= sh * 0.9:
+            continue  # skip the whole-window container
+        cx, cy = x + w // 2, y + h // 2                     # center, screen points
+        tx = round(cx * tw / sw) if sw else cx
+        ty = round(cy * th / sh) if sh else cy
+        els.append({"role": role.replace("AX", ""), "name": name,
+                    "sx": cx, "sy": cy, "tx": tx, "ty": ty})
+    return els
+
+
+def _ui_elements() -> list[dict]:
+    """Accessibility elements of the frontmost app (never raises; [] if unavailable)."""
+    if sys.platform != "darwin":
+        return []
+    try:
+        r = subprocess.run(["osascript", "-e", _UI_SCRIPT],
+                           capture_output=True, timeout=8, text=True)
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    _pyautogui()  # ensure _screen is populated
+    return _parse_ui_output(r.stdout, _screen or (0, 0), _target_hw())
+
+
 # --- one dispatcher used by both the live tools and replay ------------------
 
 def _clamp_wait(seconds) -> float:
@@ -365,6 +437,97 @@ def computer_drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> s
     move a window, select text, or move a slider."""
     return _safe_act({"action": "drag", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button},
                      f"dragged ({x1},{y1})->({x2},{y2})")
+
+
+# --- efficiency tools: structured observation + batched actions -------------
+
+@mcp.tool()
+def ui_tree(limit: int = 60) -> str:
+    """List the frontmost app's interactive UI elements (role, name, coordinates) as
+    compact TEXT — far cheaper than a screenshot and precise for clicking. PREFER this
+    over computer_screenshot to decide what to click; take a screenshot only when the
+    tree is empty or the content is visual (canvas, image, video). Coordinates are in
+    the screenshot space — pass them to computer_click, or use click_element(name)."""
+    els = _ui_elements()
+    if not els:
+        return ("no accessibility elements available (grant Accessibility permission, or "
+                "this app exposes none) — fall back to computer_screenshot.")
+    lines = [f'[{e["role"]} "{e["name"]}"] @({e["tx"]},{e["ty"]})' for e in els[:limit]]
+    extra = f"\n... (+{len(els) - limit} more; raise limit)" if len(els) > limit else ""
+    log.info("ui_tree -> %d elements", len(els))
+    return f"{len(els)} UI elements in the frontmost app:\n" + "\n".join(lines) + extra
+
+
+@mcp.tool()
+def click_element(name: str) -> str:
+    """Click the first UI element whose name matches `name` (case-insensitive) via the
+    accessibility tree — no pixel hunting, no screenshot needed. Reliable where clicks
+    by coordinate miss. Call ui_tree first to see the names."""
+    els = _ui_elements()
+    match = next((e for e in els if name.lower() in e["name"].lower()), None)
+    if not match:
+        return f"no UI element matching '{name}'. Call ui_tree to see available elements."
+    _pyautogui().click(match["sx"], match["sy"])
+    if _recording_label is not None:
+        _recorded.append(Step(action={"action": "click", "x": match["tx"], "y": match["ty"]},
+                              fingerprint=_try_grab_fp() or 0))
+    log.info("click_element %r -> %r @(%d,%d)", name, match["name"], match["tx"], match["ty"])
+    return f"clicked '{match['name']}' ({match['role']}) at ({match['tx']},{match['ty']})"
+
+
+@mcp.tool()
+def type_into(name: str, text: str) -> str:
+    """Focus the element named `name` (via the accessibility tree) and type `text`
+    into it — one call instead of screenshot -> locate -> click -> type."""
+    r = click_element(name)
+    if r.startswith("no UI element"):
+        return r
+    time.sleep(0.15)
+    _pyautogui().write(text, interval=0.01)
+    return f"typed {len(text)} chars into '{name}'"
+
+
+@mcp.tool()
+def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
+    """Run a SEQUENCE of actions in ONE call — no model round-trip between them — and
+    return a single screenshot at the end. This is the big speed/token win: instead of
+    one screenshot per action, plan the steps and run them together.
+
+    Each action is an object, e.g.:
+      {"action":"click","x":303,"y":531}   {"action":"type","text":"hello"}
+      {"action":"key","keys":"cmd+space"}  {"action":"open_app","name":"Calculator"}
+      {"action":"scroll","x":700,"y":400,"direction":"down","amount":3}
+      {"action":"wait","seconds":1}        {"action":"drag","x1":..,"y1":..,"x2":..,"y2":..}
+
+    With verify=True (default) it reports how much the screen changed after each step,
+    so you can see where a sequence went off the rails; the final screen is returned so
+    you can recover if needed."""
+    if not isinstance(actions, list) or not actions:
+        return "computer_batch needs a non-empty list of action objects"
+    steps: list[str] = []
+    t0 = time.perf_counter()
+    prev = _grab_png()
+    for i, a in enumerate(actions, 1):
+        try:
+            _do(a)
+        except Exception as e:  # noqa: BLE001 - report and stop, don't crash the tool
+            steps.append(f"{i}. {a.get('action')}: FAILED ({e}) — stopped here")
+            break
+        time.sleep(REPLAY_SETTLE)
+        cur = _grab_png()
+        if _recording_label is not None:
+            _recorded.append(Step(action=a, fingerprint=fingerprint(cur)))
+        if verify:
+            frac = diff_frames(to_gray(prev), to_gray(cur)).changed_fraction
+            steps.append(f"{i}. {a.get('action')}: screen changed {frac * 100:.1f}%")
+        else:
+            steps.append(f"{i}. {a.get('action')}: done")
+        prev = cur
+    dt = time.perf_counter() - t0
+    log.info("computer_batch: %d/%d actions in %.1fs", len(steps), len(actions), dt)
+    summary = (f"batch: ran {len(steps)}/{len(actions)} action(s) in {dt:.1f}s in one turn.\n"
+               + "\n".join(steps) + "\nFinal screen:")
+    return [summary, Image(data=prev, format="png")]
 
 
 # --- procedure cache: record once, replay instantly -------------------------

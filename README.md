@@ -62,6 +62,9 @@ that didn't change. Call the `glance_stats` tool any time to see the savings.
 | `open_app` | launch an app via `open -a` — **reliable**, no Spotlight fumbling |
 | `wait` | pause for the UI to settle (capped 10s) |
 | `frontmost_app` | name of the focused app — confirm a launch worked |
+| `ui_tree` | **the frontmost app's UI as structured text** (role/name/coords) — ~10–50× cheaper than a screenshot and precise; screenshot only as a fallback |
+| `click_element` / `type_into` | act on an element **by name** via the accessibility tree — no pixel hunting, no screenshot |
+| `computer_batch` | run a **sequence of actions in one call** (no model round-trip between them), one screenshot at the end — collapses the 1-screenshot-1-action loop |
 | `task_begin` / `task_end` | record a task once; replay it instantly next time |
 | `glance_stats` / `glance_log` | savings + cached tasks; tail the log |
 
