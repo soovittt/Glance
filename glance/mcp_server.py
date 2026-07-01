@@ -32,7 +32,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
-from . import display, telemetry
+from . import accessibility, display, keys, telemetry
 from .cache import Step, TaskCache
 from .diff import diff_frames, fingerprint, hamming, to_gray
 from .metrics import estimate_image_tokens
@@ -50,8 +50,6 @@ REPLAY_SETTLE = 0.35
 # Action types that SHOULD visibly change the screen; near-zero change right after one
 # of these in a batch means the action likely missed its target, so we stop early.
 _STALL_ACTIONS = frozenset({"click", "type", "key", "drag"})
-ANCHOR_RADIUS = 40        # px in screenshot space: a click within this of an element's
-                          # center is anchored to it, so replay can re-find it if moved.
 
 # Repo root (next to this package). Defaults for the task cache + log live here so
 # they persist and are found regardless of where Claude Code launched the server.
@@ -189,59 +187,6 @@ def _try_grab_fp() -> int | None:
         return None
 
 
-# --- keyboard ---------------------------------------------------------------
-
-_KEYS = {  # pyautogui names (non-macOS fallback)
-    "return": "enter", "escape": "esc", "backspace": "backspace", "delete": "delete",
-    "cmd": "command", "super": "command", "ctrl": "ctrl", "control": "ctrl",
-    "page_down": "pagedown", "page_up": "pageup", "space": "space",
-}
-_MAC_KEYCODES = {
-    "space": 49, "enter": 36, "return": 36, "tab": 48, "escape": 53, "esc": 53,
-    "delete": 51, "backspace": 51, "left": 123, "right": 124, "down": 125, "up": 126,
-    "pagedown": 121, "page_down": 121, "pageup": 116, "page_up": 116,
-    "home": 115, "end": 119,
-    # function keys — without these, 'f5' was typed as the text "f5"
-    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
-    "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
-}
-_MAC_MODS = {
-    "command": "command", "cmd": "command", "super": "command",
-    "ctrl": "control", "control": "control", "shift": "shift",
-    "option": "option", "alt": "option",
-}
-
-
-def _mac_key(keys: str) -> bool:
-    """Send a key/combo via AppleScript System Events. Never blocks (short timeout +
-    captured output); returns False on timeout/error so the caller can fall back."""
-    *mods, key = [p.strip() for p in keys.split("+")]
-    using = ""
-    if mods:
-        names = [_MAC_MODS.get(m.lower(), m.lower()) for m in mods]
-        using = " using {" + ", ".join(f"{n} down" for n in names) + "}"
-    kl = key.lower()
-    if kl in _MAC_KEYCODES:
-        action = f"key code {_MAC_KEYCODES[kl]}"
-    else:
-        safe = key.replace("\\", "\\\\").replace('"', '\\"')
-        action = f'keystroke "{safe}"'
-    script = f'tell application "System Events" to {action}{using}'
-    try:
-        subprocess.run(["osascript", "-e", script], check=True, capture_output=True, timeout=4)
-        return True
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
-        return False
-
-
-def _press_key(keys: str) -> None:
-    if sys.platform == "darwin" and _mac_key(keys):
-        return
-    pg = _pyautogui()
-    parts = [_KEYS.get(p.lower(), p.lower()) for p in keys.split("+")]
-    pg.hotkey(*parts) if len(parts) > 1 else pg.press(parts[0])
-
-
 def _frontmost_app() -> str:
     """Name of the frontmost (focused) app, via System Events. Never raises."""
     if sys.platform != "darwin":
@@ -259,104 +204,19 @@ def _frontmost_app() -> str:
 
 # --- accessibility tree: structured, screenshot-free observation ------------
 
-_UI_SCRIPT = r'''
-set output to ""
-tell application "System Events"
-  set frontApp to first application process whose frontmost is true
-  tell frontApp
-    try
-      set els to entire contents of front window
-    on error
-      set els to {}
-    end try
-    repeat with e in els
-      try
-        set p to position of e
-        set s to size of e
-        set output to output & (role of e) & tab & (name of e) & tab
-        set output to output & (item 1 of p) & tab & (item 2 of p) & tab
-        set output to output & (item 1 of s) & tab & (item 2 of s) & linefeed
-      end try
-    end repeat
-  end tell
-end tell
-return output
-'''
-
-
-def _parse_ui_output(raw: str, disp: display.Display, target_w: int) -> list[dict]:
-    """Parse the tab-delimited osascript dump into elements with mapped coordinates.
-
-    Element positions come in GLOBAL screen points; keep only named elements, drop
-    whole-window containers, and map each center into the active display's served
-    screenshot space. `sx/sy` stay GLOBAL (for clicking); `tx/ty` are display-relative.
-    """
-    els: list[dict] = []
-    for line in (raw or "").splitlines():
-        parts = line.split("\t")
-        if len(parts) < 6:
-            continue
-        role, name, xs, ys, ws, hs = parts[:6]
-        name = name.strip()
-        if not name:
-            continue
-        try:
-            x, y, w, h = int(xs), int(ys), int(ws), int(hs)
-        except ValueError:
-            continue
-        if w >= disp.w * 0.9 and h >= disp.h * 0.9:
-            continue  # skip the whole-window container
-        cx, cy = x + w // 2, y + h // 2                     # global center
-        tx, ty = disp.global_to_target(cx, cy, target_w)
-        els.append({"role": role.replace("AX", ""), "name": name,
-                    "sx": cx, "sy": cy, "tx": tx, "ty": ty})
-    return els
-
-
 def _ui_elements() -> list[dict]:
-    """Accessibility elements of the frontmost app (never raises; [] if unavailable)."""
-    if sys.platform != "darwin":
-        return []
-    try:
-        r = subprocess.run(["osascript", "-e", _UI_SCRIPT],
-                           capture_output=True, timeout=8, text=True)
-    except (subprocess.TimeoutExpired, OSError):
-        return []
-    return _parse_ui_output(r.stdout, _ensure_active(), TARGET_W)
+    """Frontmost app's accessibility elements, mapped into the active display's space."""
+    return accessibility.elements(_ensure_active(), TARGET_W)
 
-
-# --- accessibility anchoring: record WHAT was clicked, not just WHERE -------
 
 def _anchor_for_click(x: int, y: int, els: list[dict] | None = None) -> dict | None:
-    """The accessibility element a screenshot-space click landed on (role + name), or
-    None if the app exposes no element near the point. Recorded at capture time so that
-    replay can re-find the target by identity instead of trusting a stale coordinate.
-    Pass `els` to reuse an already-fetched tree (one osascript call instead of two)."""
-    els = _ui_elements() if els is None else els
-    if not els:
-        return None
-    best = min(els, key=lambda e: (e["tx"] - x) ** 2 + (e["ty"] - y) ** 2)
-    if (best["tx"] - x) ** 2 + (best["ty"] - y) ** 2 <= ANCHOR_RADIUS ** 2:
-        return {"role": best["role"], "name": best["name"]}
-    return None  # click hit empty space (canvas/whitespace) — no stable element to anchor
+    """Anchor a click to the element under it (reuse `els` to avoid a second a11y read)."""
+    return accessibility.anchor_for_click(_ui_elements() if els is None else els, x, y)
 
 
 def _resolve_anchor(anchor: dict) -> tuple[int, int] | None:
-    """Live SCREEN coordinates of a recorded element, matched by role then name. Exact
-    (role AND name) first; then a same-role name-substring fallback for labels that
-    reflow (e.g. a button relabeled 'Total: $4.82'). None if the element is gone —
-    the caller then falls back to the recorded pixel coordinate."""
-    role, name = anchor.get("role"), anchor.get("name")
-    els = _ui_elements()
-    exact = next((e for e in els if e["role"] == role and e["name"] == name), None)
-    if exact is not None:
-        return exact["sx"], exact["sy"]
-    if name:
-        fuzzy = next((e for e in els
-                      if e["role"] == role and name.lower() in e["name"].lower()), None)
-        if fuzzy is not None:
-            return fuzzy["sx"], fuzzy["sy"]
-    return None
+    """Live global coordinates of a recorded anchored element, or None if it's gone."""
+    return accessibility.resolve_anchor(_ui_elements(), anchor)
 
 
 # --- one dispatcher used by both the live tools and replay ------------------
@@ -381,7 +241,7 @@ def _do(action: dict) -> None:
     elif a == "type":
         _pyautogui().write(action["text"], interval=0.01)
     elif a == "key":
-        _press_key(action["keys"])
+        keys.press_key(_pyautogui(), action["keys"])
     elif a == "scroll":
         pg = _pyautogui()
         pg.moveTo(*_to_screen(action["x"], action["y"]))

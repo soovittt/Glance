@@ -115,9 +115,11 @@ gets cheaper. See [`hooks/README.md`](hooks/README.md). *(Requires Claude Code â
 
 ```
 glance/
-  mcp_server.py   the MCP server + all computer-use / efficiency tools
+  mcp_server.py   the MCP server: tool definitions + wiring (thin transport layer)
   decide.py       frame-skip decision engine (+ diff.py, observer.py, policy.py, metrics.py)
   display.py      multi-display geometry + per-display capture (Quartz)
+  keys.py         macOS keyboard (System Events + pyautogui fallback)
+  accessibility.py  read the UI as elements + anchor clicks by identity
   cache.py        task-keyed procedure cache (record once, verified replay + anchoring)
   telemetry.py    cross-tool session telemetry + report
 hooks/            PostToolUse hook mode (augment built-in computer use) + analyzers
