@@ -1,0 +1,16 @@
+{
+  "_comment": "Merge this into .claude/settings.json (project) or ~/.claude/settings.json (global). Replace the two absolute paths with your Glance checkout. Then START A NEW Claude Code session — hooks load at startup, not via reload.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/TO/Glance/.venv/bin/python /ABSOLUTE/PATH/TO/Glance/hooks/glance_hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}

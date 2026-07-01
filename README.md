@@ -88,6 +88,15 @@ screenshot SKIP changed= 0.00% img=1399tok | session: 1/2 skipped, saved 1384 to
 ```
 Set `GLANCE_LOG=/path/to/log` to change the location.
 
+### Or: augment Claude's *built-in* computer use (hook mode)
+
+Don't want to swap in glance-cua's tools at all? A `PostToolUse` hook lets Glance ride
+on Claude Code's **own** computer use: it intercepts each screenshot result and, when
+the screen didn't change, replaces the image with a text note via `updatedToolOutput` —
+so Anthropic's computer use stays exactly as-is and just gets cheaper. Full telemetry
+(`telemetry.jsonl` + an `analyze.py` report) ships with it. See
+[`hooks/README.md`](hooks/README.md). *(Requires Claude Code ≥ 2.1.121.)*
+
 ---
 
 ## Why this exists (the honest version)

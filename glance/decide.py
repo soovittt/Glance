@@ -6,6 +6,8 @@ measures exactly the code the agent runs — no drift between eval and productio
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
@@ -57,34 +59,46 @@ def _is_cursor_motion(prev_gray: np.ndarray, curr_gray: np.ndarray, policy: Glan
     return smaller >= 0.4 * bigger  # similarly sized (same cursor shape)
 
 
+@dataclass
+class Decision:
+    """A skip/send decision plus *why* — the telemetry needed to tune accuracy."""
+
+    changed: bool          # True => send the image; False => safe to skip
+    reason: str            # below_threshold | big_change | caret | cursor_motion | changed
+    diff: FrameDiff
+
+    @property
+    def changed_fraction(self) -> float:
+        return self.diff.changed_fraction
+
+
+def explain(prev_gray: np.ndarray, curr_gray: np.ndarray, policy: GlancePolicy) -> Decision:
+    """Full decision with a reason label, so callers can log *why* and tune thresholds.
+
+    Decision order:
+      1. Below the skip threshold (essentially identical) -> skip (below_threshold).
+      2. Above the 'clearly changed' fraction -> send (big_change), no blob analysis.
+      3. Ambiguous small-change band: suppress a blinking caret or a moving mouse
+         cursor -> skip (caret / cursor_motion). Otherwise -> send (changed).
+    """
+    d = diff_frames(prev_gray, curr_gray, policy.pixel_threshold)
+
+    if d.changed_fraction < policy.skip_threshold:
+        return Decision(False, "below_threshold", d)
+    if d.changed_fraction >= policy.big_change_fraction:
+        return Decision(True, "big_change", d)
+    if policy.ignore_thin_carets and _is_caret(d.bbox, policy):
+        return Decision(False, "caret", d)
+    if policy.ignore_cursor_motion and _is_cursor_motion(prev_gray, curr_gray, policy):
+        return Decision(False, "cursor_motion", d)
+    return Decision(True, "changed", d)
+
+
 def is_meaningful_change(
     prev_gray: np.ndarray,
     curr_gray: np.ndarray,
     policy: GlancePolicy,
 ) -> tuple[bool, FrameDiff]:
-    """Return (changed, diff). `changed=False` means it's safe to skip the image.
-
-    Decision order:
-      1. Below the skip threshold (essentially identical) -> unchanged.
-      2. Above the 'clearly changed' fraction -> changed (skip the expensive
-         blob analysis for big, obvious updates).
-      3. In the ambiguous small-change band, suppress known non-actionable motion:
-         a blinking caret, or a mouse cursor moving. Otherwise -> changed.
-    """
-    d = diff_frames(prev_gray, curr_gray, policy.pixel_threshold)
-
-    # (1) essentially identical
-    if d.changed_fraction < policy.skip_threshold:
-        return False, d
-
-    # (2) clearly a real change -> don't bother analyzing
-    if d.changed_fraction >= policy.big_change_fraction:
-        return True, d
-
-    # (3) ambiguous small change: is it just a caret or a cursor move?
-    if policy.ignore_thin_carets and _is_caret(d.bbox, policy):
-        return False, d
-    if policy.ignore_cursor_motion and _is_cursor_motion(prev_gray, curr_gray, policy):
-        return False, d
-
-    return True, d
+    """Return (changed, diff). `changed=False` means it's safe to skip the image."""
+    dec = explain(prev_gray, curr_gray, policy)
+    return dec.changed, dec.diff

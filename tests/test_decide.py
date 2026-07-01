@@ -52,6 +52,24 @@ def test_two_chars_not_mistaken_for_cursor_move():
     assert changed is True, "two dark blobs are text, not a cursor move"
 
 
+def test_explain_gives_reasons():
+    from glance.decide import explain
+    base = _page()
+
+    identical = explain(base, base.copy(), POLICY)
+    assert identical.changed is False and identical.reason == "below_threshold"
+
+    big = base.copy()
+    big[:, :700] = 0
+    assert explain(base, big, POLICY).changed is True     # a large change is sent
+
+    caret = base.copy()
+    cv2.rectangle(caret, (300, 106), (302, 124), (0,), -1)
+    dec = explain(base, caret, POLICY)
+    assert dec.changed is False and dec.reason == "caret"
+    assert 0.0 <= dec.changed_fraction <= 1.0             # telemetry field is present
+
+
 def test_status_dot_appearing_is_sent():
     base = _page()
     dot = base.copy()

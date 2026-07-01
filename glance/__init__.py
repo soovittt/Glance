@@ -6,6 +6,7 @@ change (Layer 1, Observer) and replay action sequences you've already done
 """
 
 from .cache import Procedure, Step, TaskCache
+from .decide import Decision, explain, is_meaningful_change
 from .diff import FrameDiff, dhash, diff_frames, fingerprint, hamming
 from .metrics import GlanceStats, estimate_image_tokens
 from .observer import Observation, Observer
@@ -21,6 +22,9 @@ __all__ = [
     "TaskCache",
     "Procedure",
     "Step",
+    "Decision",
+    "explain",
+    "is_meaningful_change",
     "FrameDiff",
     "diff_frames",
     "dhash",
