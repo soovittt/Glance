@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 from .model import TaskResult
@@ -49,6 +50,10 @@ def score(results: list[TaskResult]) -> str:
         f"time          : {total_time / 60:.1f} min total, {total_time / max(len(results), 1):.1f}s/task avg",
         "  slowest     : " + ", ".join(f"{r.id} {r.duration_s:.0f}s" for r in slowest),
     ]
+    errored = Counter(r.error for r in results if r.error)
+    if errored:
+        lines.append("agent errors  : " + ", ".join(f"{k}×{v}" for k, v in errored.items())
+                     + "  (timeouts/crashes — separate from a wrong answer)")
     fails = [r for r in auto if not r.ok]
     if fails:
         lines.append("\nfailures:")

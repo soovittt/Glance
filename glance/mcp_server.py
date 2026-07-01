@@ -276,11 +276,14 @@ def _safe_act(action: dict, ok_msg: str) -> str:
     """Run an action at a tool boundary: on failure return a clear message instead of
     crashing the tool, so the agent can recover. Broad except is deliberate here —
     GUI control can raise many low-level errors and resilience beats propagation."""
+    kind = action.get("action", "action")
     try:
         _act(action)
+        telemetry.emit(tool=kind, modality="action")
         return ok_msg
     except Exception as e:  # noqa: BLE001 - intentional control boundary
         log.warning("action %s FAILED: %s", action, e)
+        telemetry.emit(tool=kind, modality="action", failed=True)
         return f"action failed ({action.get('action')}): {e}"
 
 
@@ -328,6 +331,7 @@ def open_app(name: str) -> str:
         ok, msg = False, f"could not launch '{name}': {e}"
     if ok and _recording_label is not None:
         _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0))
+    telemetry.emit(tool="open_app", modality="action", failed=not ok)
     log.info("open_app '%s' -> %s", name, "ok" if ok else msg)
     return msg
 
@@ -344,11 +348,14 @@ def focus_app(name: str) -> str:
     try:
         subprocess.run(["osascript", "-e", f'tell application "{safe}" to activate'],
                        check=True, capture_output=True, timeout=5)
+        telemetry.emit(tool="focus_app", modality="action")
         log.info("focus_app '%s'", name)
         return f"activated {name} (now frontmost)"
     except subprocess.CalledProcessError as e:
+        telemetry.emit(tool="focus_app", modality="action", failed=True)
         return f"could not focus '{name}': {e.stderr.decode()[:150].strip()}"
     except (subprocess.TimeoutExpired, OSError) as e:
+        telemetry.emit(tool="focus_app", modality="action", failed=True)
         return f"could not focus '{name}': {e}"
 
 
@@ -358,6 +365,7 @@ def frontmost_app() -> str:
     actually launched and came to the front (e.g. right after open_app), instead of
     guessing from screenshots."""
     name = _frontmost_app()
+    telemetry.emit(tool="frontmost_app", modality="action")
     log.info("frontmost_app -> %s", name)
     return name
 

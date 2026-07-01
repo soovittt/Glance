@@ -39,6 +39,7 @@ class TaskResult:
     naive_round_trips: int = 0
     tool_mix: dict[str, int] = field(default_factory=dict)
     duration_s: float = 0.0
+    error: str = ""             # "" | "timeout" | "exit <n>" | "launch: ..." — agent-level failure
 
     @property
     def pct_vs_naive(self) -> float:

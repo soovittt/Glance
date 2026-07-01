@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from bench.suite import loop, report, runner, verifiers  # noqa: E402
+from bench.suite import analyze, loop, report, runner, verifiers  # noqa: E402
 from bench.suite.model import TaskResult  # noqa: E402
 
 
@@ -58,6 +59,26 @@ def test_findings_flags_screenshot_heavy_tasks():
     assert "l:" not in out
 
 
+def test_analyze_shows_failures_with_trajectory(tmp_path):
+    d = tmp_path / "run1"
+    d.mkdir()
+    (d / "_meta.json").write_text(json.dumps({"tasks": 2, "passed": 1}))
+    (d / "t1.json").write_text(json.dumps({
+        "id": "t1", "difficulty": "easy", "prompt": "p",
+        "result": {"id": "t1", "ok": False, "error": "timeout", "detail": "missing",
+                   "duration_s": 9.0, "round_trips": 3, "tokens": 100},
+        "telemetry": [{"tool": "computer_screenshot"}], "stdout_tail": "got stuck on dialog"}))
+    (d / "t2.json").write_text(json.dumps({
+        "id": "t2", "difficulty": "easy", "prompt": "p",
+        "result": {"id": "t2", "ok": True, "error": "", "detail": "ok",
+                   "duration_s": 5.0, "round_trips": 2, "tokens": 50},
+        "telemetry": [], "stdout_tail": "done"}))
+    out = analyze.analyze(d, failures_only=True)
+    assert "t1" in out and "timeout" in out and "got stuck on dialog" in out
+    assert "t2" not in out                              # passing task hidden by default
+    assert "t2" in analyze.analyze(d, failures_only=False)
+
+
 def test_simulate_result_is_deterministic_and_shaped():
     t = runner.TASKS[0]
     a, b = runner.simulate_result(t, 0), runner.simulate_result(t, 0)
@@ -67,15 +88,15 @@ def test_simulate_result_is_deterministic_and_shaped():
     assert a.tokens > 0 and a.duration_s > 0
 
 
-def test_telemetry_metrics_aggregation(monkeypatch):
+def test_metrics_aggregation():
     recs = [
         {"tool": "computer_screenshot", "modality": "image", "event": "send", "est_tokens": 1600},
         {"tool": "computer_screenshot", "modality": "image", "event": "skip", "est_tokens": 1600},
         {"tool": "computer_batch", "modality": "batch", "est_tokens": 1600, "round_trips_saved": 3},
+        {"tool": "computer_click", "modality": "action"},        # now counted as a round-trip
     ]
-    monkeypatch.setattr(runner.telemetry, "load", lambda: recs)
-    m = runner._telemetry_metrics()
-    assert m["round_trips"] == 3
-    assert m["naive_round_trips"] == 6                 # 3 calls + 3 saved
+    m = runner._metrics(recs)
+    assert m["round_trips"] == 4
+    assert m["naive_round_trips"] == 7                 # 4 calls + 3 saved
     assert m["tokens"] == 1600 + 15 + 1600             # skip counts as the ~15-token note
     assert m["tool_mix"]["computer_screenshot"] == 2

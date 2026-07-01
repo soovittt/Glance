@@ -15,8 +15,24 @@ a change is only kept if the success rate holds.
   `claude -p` (your registered glance-cua MCP) → `verify()` → record correctness + the
   per-task efficiency the server logged.
 - **`report.py`** — scorecard (success rate + tokens/round-trips vs a naive loop +
-  **total/per-task time** with the 3 slowest tasks) and a regression diff vs the
-  previous run. Time is a first-class metric — the loop optimizes for fast *and* cheap.
+  **total/per-task time** with the 3 slowest tasks + agent-error/timeout counts) and a
+  regression diff vs the previous run. Time is a first-class metric.
+- **`analyze.py`** — deep-dive a run's **per-task trajectories**: for each failure, the
+  glance-cua tool sequence, the agent-level error, and the agent's own transcript tail
+  ("got stuck on the template chooser") — so you can see *why* it failed, not just that
+  it did. `python -m bench.suite.analyze [--all]`.
+
+## Observability captured per run
+- `results/run_<ts>.json` — one `TaskResult` per task (correctness, tokens, round-trips,
+  time, `error`).
+- `results/trajectories/<ts>/<task>.json` — the **full trajectory**: prompt, verdict,
+  every glance-cua telemetry record (all tool calls now emit — clicks/types included, so
+  round-trips are exact), and the agent's stdout/stderr tail.
+- `results/trajectories/<ts>/_meta.json` — run metadata (commit, host, timing, error mix).
+
+The agent runs headless with a **system prompt** that steers it to drive the GUI via
+glance-cua only (no shell/file shortcuts) — without it, a restricted headless agent
+flounders and times out.
 - **`loop.py`** — ties it together and prints prioritized next actions.
 
 ## Run
