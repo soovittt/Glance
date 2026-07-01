@@ -64,6 +64,7 @@ Then:
 | `computer_type` / `computer_key` | keyboard: type text, press a combo (e.g. `cmd+space`) |
 | `computer_scroll` | scroll at a point |
 | `open_app` | launch an app via `open -a` — **reliable**, no Spotlight fumbling |
+| `focus_app` | bring an app to the front / raise its window (fixes "keystrokes went to the wrong app") |
 | `wait` | pause for the UI to settle (capped 10s) |
 | `frontmost_app` | name of the focused app — confirm a launch worked |
 | `ui_tree` | **the frontmost app's UI as structured text** (role/name/coords) — ~10–50× cheaper than a screenshot and precise; screenshot only as a fallback |
@@ -73,8 +74,10 @@ Then:
 | `session_report` | **cross-tool observability** — screenshots vs ui_tree vs batches, tokens by modality, round-trips saved, % vs a naive loop |
 | `glance_stats` / `glance_log` | savings + cached tasks; tail the log |
 
-Coordinates are in a 1366-px-wide space that preserves your screen's aspect ratio,
-so clicks land accurately on any monitor.
+Coordinates are in a 1366-px-wide space that preserves the aspect ratio of **the
+display the active app is on** — glance-cua captures whichever monitor the front app
+lives on (multi-display safe, via `glance/display.py`), so an app on a second screen
+is never invisible and clicks land accurately on any monitor.
 
 ### Tracking what it does (logging)
 

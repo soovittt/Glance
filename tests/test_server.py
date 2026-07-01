@@ -13,9 +13,10 @@ import glance.mcp_server as m
 
 @pytest.fixture
 def screen_1512x982(monkeypatch):
-    """Pretend pyautogui is loaded with a 1512x982 logical screen (14" MBP)."""
+    """Pretend the active display is a single 1512x982 logical screen (14" MBP)."""
     monkeypatch.setattr(m, "_pg", object())     # mark pyautogui as 'loaded'
     monkeypatch.setattr(m, "_screen", (1512, 982))
+    monkeypatch.setattr(m, "_active", m.display.Display(0, 0, 1512, 982))
     return 1512, 982
 
 
@@ -96,8 +97,7 @@ def test_do_click_scales_to_screen(monkeypatch, screen_1512x982):
 
 @pytest.mark.parametrize("sw,sh", [(3440, 1440), (2560, 1600), (1920, 1080), (1280, 800)])
 def test_coordinate_corners_across_aspect_ratios(monkeypatch, sw, sh):
-    monkeypatch.setattr(m, "_pg", object())
-    monkeypatch.setattr(m, "_screen", (sw, sh))
+    monkeypatch.setattr(m, "_active", m.display.Display(0, 0, sw, sh))
     tw, th = m._target_hw()
     assert m._to_screen(0, 0) == (0, 0)
     assert m._to_screen(tw, th) == (sw, sh)            # exact corner on any monitor
@@ -119,17 +119,29 @@ def test_mac_key_script(monkeypatch, combo, expected):
     assert seen[0] == f"tell application \"System Events\" to {expected}"
 
 
-def test_parse_ui_output_maps_and_filters(monkeypatch):
+def test_parse_ui_output_maps_and_filters():
+    disp = m.display.Display(0, 0, 1512, 982)
     raw = ("AXButton\t7\t100\t200\t50\t50\n"        # kept
            "AXStaticText\t\t0\t0\t10\t10\n"          # dropped: no name
            "AXWindow\twin\t0\t0\t1512\t982\n")       # dropped: whole-window
-    els = m._parse_ui_output(raw, (1512, 982), (1366, 887))
+    els = m._parse_ui_output(raw, disp, 1366)
     assert len(els) == 1
     e = els[0]
     assert e["role"] == "Button" and e["name"] == "7"
-    assert (e["sx"], e["sy"]) == (125, 225)                       # screen-point center
-    assert e["tx"] == round(125 * 1366 / 1512)                    # mapped to screenshot space
-    assert e["ty"] == round(225 * 887 / 982)
+    assert (e["sx"], e["sy"]) == (125, 225)                       # GLOBAL center (for clicking)
+    assert (e["tx"], e["ty"]) == disp.global_to_target(125, 225, 1366)  # display-relative
+
+
+def test_parse_ui_output_maps_second_display():
+    """An app on a second display maps relative to THAT display, not the primary."""
+    disp = m.display.Display(1512, 0, 1920, 1080)                 # to the right of primary
+    raw = "AXButton\tOK\t1612\t100\t80\t40\n"                     # global coords on display 2
+    els = m._parse_ui_output(raw, disp, 1366)
+    assert len(els) == 1
+    e = els[0]
+    assert (e["sx"], e["sy"]) == (1652, 120)                      # global center kept for click
+    assert e["tx"] == round((1652 - 1512) * 1366 / 1920)          # relative to display origin
+    assert 0 <= e["tx"] <= 1366
 
 
 def test_computer_batch_runs_all_actions_in_one_call(monkeypatch):

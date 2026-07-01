@@ -32,7 +32,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
-from . import telemetry
+from . import display, telemetry
 from .cache import Step, TaskCache
 from .diff import diff_frames, fingerprint, hamming, to_gray
 from .metrics import estimate_image_tokens
@@ -95,6 +95,7 @@ _start_fp: int | None = None
 # module-load time would crash the server before it can register its tools.
 _pg = None
 _screen: tuple[int, int] | None = None
+_active: display.Display | None = None   # the display we're currently serving/acting on
 
 
 def _pyautogui():
@@ -108,26 +109,72 @@ def _pyautogui():
     return _pg
 
 
+def _front_window_point() -> tuple[int, int] | None:
+    """A global point just inside the frontmost app's window — used to pick its display."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to tell (first process whose frontmost is true) '
+             'to get position of front window'],
+            capture_output=True, timeout=4, text=True)
+        parts = [p.strip() for p in (r.stdout or "").split(",")]
+        if len(parts) == 2:
+            return int(parts[0]) + 5, int(parts[1]) + 5
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return None
+
+
+def _active_display() -> display.Display:
+    """The display the frontmost app is on; falls back to primary / pyautogui size."""
+    ds = display.displays()
+    if not ds:
+        _pyautogui()
+        sw, sh = _screen  # type: ignore[misc]
+        return display.Display(0, 0, sw, sh)
+    pt = _front_window_point()
+    if pt:
+        d = display.containing(ds, pt[0], pt[1])
+        if d is not None:
+            return d
+    return display.main_display(ds) or ds[0]
+
+
+def _ensure_active() -> display.Display:
+    global _active
+    if _active is None:
+        _active = _active_display()
+    return _active
+
+
 def _target_hw() -> tuple[int, int]:
-    """(width, height) for served screenshots — preserves the real screen aspect
+    """(width, height) for served screenshots — preserves the active display's aspect
     ratio so the image isn't distorted (which would throw off click grounding)."""
-    _pyautogui()
-    sw, sh = _screen  # type: ignore[misc]
-    return TARGET_W, max(1, round(TARGET_W * sh / sw))
+    return _ensure_active().target_size(TARGET_W)
 
 
 def _to_screen(x: int, y: int) -> tuple[int, int]:
-    _pyautogui()
-    sw, sh = _screen  # type: ignore[misc]
-    tw, th = _target_hw()
-    return round(x * sw / tw), round(y * sh / th)
+    """Map a served-screenshot point to global screen coords (correct across displays)."""
+    return _ensure_active().to_global(x, y, TARGET_W)
 
 
 def _grab_png() -> bytes:
-    shot = _pyautogui().screenshot().resize(_target_hw())
-    buf = io.BytesIO()
-    shot.save(buf, format="PNG")
-    return buf.getvalue()
+    """Capture the display the active app is on, served at the target size."""
+    global _active
+    _active = _active_display()          # refresh — the app may have moved displays
+    raw = display.capture(_active)
+    if raw is None:                      # Quartz unavailable -> primary display via pyautogui
+        buf = io.BytesIO()
+        _pyautogui().screenshot().save(buf, format="PNG")
+        raw = buf.getvalue()
+    import cv2
+    import numpy as np
+
+    arr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+    _ok, out = cv2.imencode(".png", cv2.resize(arr, _active.target_size(TARGET_W)))
+    return out.tobytes()
 
 
 def _try_grab_fp() -> int | None:
@@ -234,14 +281,13 @@ return output
 '''
 
 
-def _parse_ui_output(raw: str, screen: tuple[int, int], target: tuple[int, int]) -> list[dict]:
+def _parse_ui_output(raw: str, disp: display.Display, target_w: int) -> list[dict]:
     """Parse the tab-delimited osascript dump into elements with mapped coordinates.
 
-    Keeps only named elements, drops whole-window containers, and maps each element's
-    center from screen points into the served screenshot coordinate space.
+    Element positions come in GLOBAL screen points; keep only named elements, drop
+    whole-window containers, and map each center into the active display's served
+    screenshot space. `sx/sy` stay GLOBAL (for clicking); `tx/ty` are display-relative.
     """
-    sw, sh = screen
-    tw, th = target
     els: list[dict] = []
     for line in (raw or "").splitlines():
         parts = line.split("\t")
@@ -255,11 +301,10 @@ def _parse_ui_output(raw: str, screen: tuple[int, int], target: tuple[int, int])
             x, y, w, h = int(xs), int(ys), int(ws), int(hs)
         except ValueError:
             continue
-        if sw and sh and w >= sw * 0.9 and h >= sh * 0.9:
+        if w >= disp.w * 0.9 and h >= disp.h * 0.9:
             continue  # skip the whole-window container
-        cx, cy = x + w // 2, y + h // 2                     # center, screen points
-        tx = round(cx * tw / sw) if sw else cx
-        ty = round(cy * th / sh) if sh else cy
+        cx, cy = x + w // 2, y + h // 2                     # global center
+        tx, ty = disp.global_to_target(cx, cy, target_w)
         els.append({"role": role.replace("AX", ""), "name": name,
                     "sx": cx, "sy": cy, "tx": tx, "ty": ty})
     return els
@@ -274,8 +319,7 @@ def _ui_elements() -> list[dict]:
                            capture_output=True, timeout=8, text=True)
     except (subprocess.TimeoutExpired, OSError):
         return []
-    _pyautogui()  # ensure _screen is populated
-    return _parse_ui_output(r.stdout, _screen or (0, 0), _target_hw())
+    return _parse_ui_output(r.stdout, _ensure_active(), TARGET_W)
 
 
 # --- accessibility anchoring: record WHAT was clicked, not just WHERE -------
@@ -423,6 +467,26 @@ def open_app(name: str) -> str:
         _recorded.append(Step(action=action, fingerprint=_try_grab_fp() or 0))
     log.info("open_app '%s' -> %s", name, "ok" if ok else msg)
     return msg
+
+
+@mcp.tool()
+def focus_app(name: str) -> str:
+    """Bring an app to the front / raise its window above others. Use when an app is
+    open but hidden behind another window (or on a second display) before you click or
+    screenshot it — this is what stops the 'my keystrokes went to the wrong app' mess.
+    Screenshots automatically follow whichever display the front app is on."""
+    if sys.platform != "darwin":
+        return "focus_app is macOS-only"
+    safe = name.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        subprocess.run(["osascript", "-e", f'tell application "{safe}" to activate'],
+                       check=True, capture_output=True, timeout=5)
+        log.info("focus_app '%s'", name)
+        return f"activated {name} (now frontmost)"
+    except subprocess.CalledProcessError as e:
+        return f"could not focus '{name}': {e.stderr.decode()[:150].strip()}"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return f"could not focus '{name}': {e}"
 
 
 @mcp.tool()
