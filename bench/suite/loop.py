@@ -45,6 +45,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-run", action="store_true",
                     help="report on the latest saved run without re-running the suite")
+    ap.add_argument("--simulate", action="store_true",
+                    help="dry-run the harness with synthetic results (no agent, no screen)")
     args = ap.parse_args()
 
     if args.no_run:
@@ -53,7 +55,7 @@ def main() -> None:
             raise SystemExit("no runs yet — drop --no-run to run the suite first")
         results = report.load_results(r[-1])
     else:
-        results = run_suite()
+        results = run_suite(simulate=args.simulate)
 
     print("\n" + report.score(results))
     r = report.runs()

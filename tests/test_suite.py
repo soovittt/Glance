@@ -58,6 +58,15 @@ def test_findings_flags_screenshot_heavy_tasks():
     assert "l:" not in out
 
 
+def test_simulate_result_is_deterministic_and_shaped():
+    t = runner.TASKS[0]
+    a, b = runner.simulate_result(t, 0), runner.simulate_result(t, 0)
+    assert a == b                                          # deterministic per task id
+    assert a.id == t.id and not a.manual
+    assert a.round_trips > 0 and a.naive_round_trips >= a.round_trips
+    assert a.tokens > 0 and a.duration_s > 0
+
+
 def test_telemetry_metrics_aggregation(monkeypatch):
     recs = [
         {"tool": "computer_screenshot", "modality": "image", "event": "send", "est_tokens": 1600},

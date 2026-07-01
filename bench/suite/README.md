@@ -22,11 +22,19 @@ a change is only kept if the success rate holds.
 ## Run
 ```bash
 pip install -e ".[mcp]"                  # glance-cua registered with Claude Code
-python -m bench.suite.loop               # run the suite, then report + findings
+python -m bench.suite.loop --simulate    # dry-run the harness (no agent, no screen)
+python -m bench.suite.loop               # LIVE run, then report + findings
 python -m bench.suite.loop --no-run      # report on the latest saved run only
-python -m bench.suite.runner --ids calc_mul,note_groceries   # a subset
+python -m bench.suite.runner --ids text_01,notes_01   # a subset
 ```
 Results are saved to `results/run_<ts>.json`.
+
+**Validate first, then go live.** `--simulate` exercises the whole pipeline (scoring,
+time, regression diff, findings) with synthetic results so you can confirm it works
+before committing your machine. A live run drives your real desktop via headless
+`claude -p --permission-mode bypassPermissions` — approval gates are off so the agent
+can act unattended, so **you must launch it yourself** in your own terminal (a nested
+agent cannot disable its own permission gates). Budget ~2 hours for the full 150.
 
 ## The cycle
 ```
