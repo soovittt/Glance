@@ -23,3 +23,6 @@ bench/traces/
 .DS_Store
 .idea/
 .vscode/
+
+# suite run outputs
+bench/suite/results/*.json
