@@ -1,8 +1,15 @@
-# Glance 👁️
+<p align="center">
+  <img src="assets/logo.png" alt="Glance" width="440">
+</p>
 
-**Make Claude *glance*, not stare.** A token-efficient computer-use layer for Claude
-Code — Claude controls your Mac with far fewer screenshot tokens and model
-round-trips, on your **Pro/Max subscription (no API key)**.
+<p align="center">
+  <b>Make Claude <i>glance</i>, not stare.</b> — a token-efficient computer-use layer for Claude Code.
+</p>
+
+---
+
+Claude controls your Mac with far fewer screenshot tokens and model round-trips, on
+your **Pro/Max subscription (no API key)**.
 
 The default computer-use loop sends a full ~1,500-token screenshot on **every** step.
 Glance attacks that on three fronts: skip screenshots that didn't change, read the UI
