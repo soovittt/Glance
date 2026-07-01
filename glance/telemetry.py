@@ -37,6 +37,17 @@ def emit(**fields) -> None:
         pass
 
 
+def reset() -> None:
+    """Start a fresh telemetry session (clears the file) so a run can be measured in
+    isolation. Called by glance_reset."""
+    p = path()
+    try:
+        if p.exists():
+            p.unlink()
+    except OSError:
+        pass
+
+
 def load(p: str | Path | None = None) -> list[dict]:
     fp = Path(p) if p else path()
     if not fp.exists():

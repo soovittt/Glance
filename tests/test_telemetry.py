@@ -34,3 +34,13 @@ def test_emit_and_load_roundtrip(tmp_path, monkeypatch):
     emit(tool="ui_tree", modality="text", est_tokens=42)
     rows = load()
     assert len(rows) == 1 and rows[0]["tool"] == "ui_tree" and "ts" in rows[0]
+
+
+def test_reset_clears_session(tmp_path, monkeypatch):
+    from glance.telemetry import reset
+    fp = tmp_path / "t.jsonl"
+    monkeypatch.setenv("GLANCE_TELEMETRY", str(fp))
+    emit(tool="ui_tree", modality="text", est_tokens=1)
+    assert fp.exists()
+    reset()                                  # start a fresh measurement session
+    assert not fp.exists() and load() == []

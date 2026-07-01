@@ -47,6 +47,9 @@ TARGET_W = 1366   # served screenshot width; height derived from real aspect (_t
 START_DIVERGE_BITS = 22   # current screen vs where the procedure was recorded
 STEP_DIVERGE_BITS = 26    # each replayed step's result vs the recorded result
 REPLAY_SETTLE = 0.35
+# Action types that SHOULD visibly change the screen; near-zero change right after one
+# of these in a batch means the action likely missed its target, so we stop early.
+_STALL_ACTIONS = frozenset({"click", "type", "key", "drag"})
 ANCHOR_RADIUS = 40        # px in screenshot space: a click within this of an element's
                           # center is anchored to it, so replay can re-find it if moved.
 
@@ -611,7 +614,8 @@ def type_into(name: str, text: str) -> str:
 
 
 @mcp.tool()
-def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
+def computer_batch(actions: list[dict[str, Any]], verify: bool = True,
+                   stop_on_stall: bool = True):
     """Run a SEQUENCE of actions in ONE call — no model round-trip between them — and
     return a single screenshot at the end. This is the big speed/token win: instead of
     one screenshot per action, plan the steps and run them together.
@@ -622,9 +626,10 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
       {"action":"scroll","x":700,"y":400,"direction":"down","amount":3}
       {"action":"wait","seconds":1}        {"action":"drag","x1":..,"y1":..,"x2":..,"y2":..}
 
-    With verify=True (default) it reports how much the screen changed after each step,
-    so you can see where a sequence went off the rails; the final screen is returned so
-    you can recover if needed."""
+    With verify=True (default) it reports how much the screen changed after each step.
+    With stop_on_stall=True (default) it stops early if a click/type/key had NO visible
+    effect (likely a missed target), returning the current screen so you can recover
+    instead of blindly continuing a broken sequence."""
     if not isinstance(actions, list) or not actions:
         return "computer_batch needs a non-empty list of action objects"
     steps: list[str] = []
@@ -643,12 +648,18 @@ def computer_batch(actions: list[dict[str, Any]], verify: bool = True):
         cur = _grab_png()
         if _recording_label is not None:
             _recorded.append(Step(action=a, fingerprint=fingerprint(cur), anchor=anchor))
+        stalled = False
         if verify:
             frac = diff_frames(to_gray(prev), to_gray(cur)).changed_fraction
-            steps.append(f"{i}. {a.get('action')}: screen changed {frac * 100:.1f}%")
+            stalled = (stop_on_stall and a.get("action") in _STALL_ACTIONS
+                       and frac < _observer.policy.skip_threshold)
+            steps.append(f"{i}. {a.get('action')}: screen changed {frac * 100:.1f}%"
+                         + ("  ⚠ no visible effect (likely missed) — stopped early" if stalled else ""))
         else:
             steps.append(f"{i}. {a.get('action')}: done")
         prev = cur
+        if stalled:
+            break
     dt = time.perf_counter() - t0
     log.info("computer_batch: %d/%d actions in %.1fs", len(steps), len(actions), dt)
     telemetry.emit(tool="computer_batch", modality="batch", n_actions=len(actions),
@@ -793,10 +804,14 @@ def glance_log(lines: int = 40) -> str:
 
 @mcp.tool()
 def glance_reset() -> str:
-    """Forget the current screen baseline (call when starting unrelated work). Token
-    stats and cached tasks are PRESERVED."""
+    """Start a fresh measurement session: forget the screen baseline and clear session
+    telemetry, so `session_report` reflects only what happens next. Cached tasks and the
+    log file are preserved."""
+    global _active
     _observer.reset()
-    return "baseline reset (savings stats + cached tasks preserved)"
+    telemetry.reset()
+    _active = None
+    return "reset — fresh session (baseline + telemetry cleared; cached tasks kept)"
 
 
 def main() -> None:

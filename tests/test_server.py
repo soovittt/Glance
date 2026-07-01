@@ -158,11 +158,32 @@ def test_computer_batch_runs_all_actions_in_one_call(monkeypatch):
 
     acts = [{"action": "click", "x": 1, "y": 2}, {"action": "type", "text": "hi"},
             {"action": "key", "keys": "enter"}]
-    res = asyncio.run(m.mcp.call_tool("computer_batch", {"actions": acts}))
+    # stop_on_stall off: this mock never changes the frame, so we test the run-all path
+    res = asyncio.run(m.mcp.call_tool("computer_batch", {"actions": acts, "stop_on_stall": False}))
     content = res[0] if isinstance(res, tuple) else res
     assert calls == ["click", "type", "key"]                      # all ran, one call
     kinds = [type(c).__name__ for c in content]
     assert "TextContent" in kinds and "ImageContent" in kinds     # summary + final screen
+
+
+def test_computer_batch_stops_on_stall(monkeypatch):
+    import asyncio
+
+    import cv2
+    import numpy as np
+    png = cv2.imencode(".png", np.zeros((10, 10, 3), np.uint8))[1].tobytes()  # frame never changes
+    calls = []
+    monkeypatch.setattr(m, "_do", lambda a: calls.append(a["action"]))
+    monkeypatch.setattr(m, "_grab_png", lambda: png)
+    monkeypatch.setattr(m, "_recording_label", None)
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+
+    acts = [{"action": "click", "x": 1, "y": 2}, {"action": "type", "text": "hi"}]
+    res = asyncio.run(m.mcp.call_tool("computer_batch", {"actions": acts}))   # stall on by default
+    content = res[0] if isinstance(res, tuple) else res
+    text = next(c.text for c in content if type(c).__name__ == "TextContent")
+    assert calls == ["click"]                    # stopped after the no-op click
+    assert "no visible effect" in text
 
 
 def test_record_then_replay_roundtrip(monkeypatch, tmp_path):
