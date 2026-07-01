@@ -1,55 +1,52 @@
 # Glance 👁️
 
-**Make Claude *glance*, not stare.** A drop-in efficiency layer for computer-use agents.
+**Make Claude *glance*, not stare.** A token-efficient computer-use layer for Claude
+Code — Claude controls your Mac with far fewer screenshot tokens and model
+round-trips, on your **Pro/Max subscription (no API key)**.
 
-Computer-use agents send a fresh, full-resolution screenshot to the model on
-**every single step** — even when the screen barely changed. Each screenshot costs
-~1,000–1,300 tokens and adds latency to a loop that already runs dozens of steps per
-task. Glance skips the screenshots that didn't change and (Layer 2) replays action
-sequences you've already done. **Fewer tokens, less latency, same behavior.**
+The default computer-use loop sends a full ~1,500-token screenshot on **every** step.
+Glance attacks that on three fronts: skip screenshots that didn't change, read the UI
+as cheap **text** instead of pixels when possible, and **batch** whole action
+sequences into one model round-trip. Measured ~40% fewer tokens on real tasks.
 
-```python
-from glance import Observer
+## Quick start (macOS, ~5 min)
 
-observer = Observer()
-
-# in your agent loop, after each action:
-screenshot = take_screenshot()
-obs = observer.observe(screenshot)        # ← Glance decides: changed or not?
-# obs.blocks is a full image if the screen changed, else a ~15-token "no change" note
-messages.append({"role": "user", "content": [
-    {"type": "tool_result", "tool_use_id": tid, "content": obs.blocks}
-]})
-```
-
-That's the whole integration. One line.
-
----
-
-## ⭐ Use it with Claude Code — your subscription, no API key
-
-If you have a Claude **Pro/Max** plan, Claude Code already runs on it (no API key,
-no per-token billing) and can control your real computer through an MCP server.
-Glance ships one — so Claude Code gets **token-efficient** computer use: redundant
-screenshots cost ~15 tokens instead of ~1,500, saving usage against your plan limits.
-
-```
-Claude Code (your subscription)  ──MCP──►  glance-cua server  ──►  your real Mac
-                                            (Glance skips unchanged screenshots)
-```
+Requirements: macOS · Python 3.10+ · Claude Code on a **Pro/Max** plan.
 
 ```bash
+git clone https://github.com/soovittt/Glance.git glance && cd glance
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[mcp]"
-# register the server (use YOUR venv python — see examples/claude_code_mcp.json):
+
+# register the efficient computer-use server with Claude Code:
 claude mcp add glance-cua -- "$(pwd)/.venv/bin/python" -m glance.mcp_server
 ```
 
-Then in Claude Code: grant macOS **Accessibility + Screen Recording** permission the
-first time, and ask it to do a desktop task. Glance silently skips the screenshots
-that didn't change. Call the `glance_stats` tool any time to see the savings.
+Then:
+1. **Grant permission** — the first computer-use call prompts for macOS
+   **Accessibility + Screen Recording**; approve both (Screen Recording may need a
+   Claude Code restart).
+2. **Open a new Claude Code session** and give it a desktop task, e.g.
+   *"open Calculator and work out 48 × 12."*
+3. It drives your Mac through glance-cua — skipping unchanged screenshots, reading the
+   accessibility tree, and batching actions.
+4. Ask it to **call `session_report`** (or run `python hooks/session_report.py`) to see
+   the efficiency: tokens by modality, round-trips saved, % vs a naive loop.
 
-> Heavy apps work because it's your *actual* desktop — not a browser sandbox. Use a
-> throwaway user/VM if you don't want the agent touching real files.
+> It controls your **actual** desktop, so heavy native apps work — but the agent can
+> click anything. Use a throwaway macOS user or VM if you don't want it touching real
+> files.
+
+## How it works — three levers + observability
+- **Frame-skip (Glance):** an unchanged screenshot becomes a ~15-token note instead of
+  a ~1,500-token image. Tuned to 100% accuracy / 0 missed changes on a labeled set.
+- **Structured observation:** `ui_tree` reads the UI as text (10–50× cheaper than a
+  screenshot); `click_element` / `type_into` act on elements **by name**.
+- **Batching + procedure cache:** `computer_batch` runs a whole action sequence in one
+  model round-trip; `task_begin` / `task_end` record a task once and replay it
+  instantly, re-finding moved elements via accessibility anchoring.
+- **Telemetry:** every tool call is measured; `session_report` shows exactly where
+  tokens and round-trips go, so you tune from data.
 
 ### Tools the server exposes
 

@@ -30,8 +30,8 @@ mcp = ["mcp>=1.2", "pyautogui>=0.9.54", "pillow>=10.0"]
 glance-cua = "glance.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/yourname/glance"
-Issues = "https://github.com/yourname/glance/issues"
+Homepage = "https://github.com/soovittt/Glance"
+Issues = "https://github.com/soovittt/Glance/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["glance"]
