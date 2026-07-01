@@ -5,14 +5,18 @@ from real runs instead of guesses. The reward is **efficiency gated by correctne
 a change is only kept if the success rate holds.
 
 ## Pieces
-- **`tasks.py`** — natural-language tasks, each with a programmatic `verify()` (a Desktop
-  file containing X, a Note titled Y, a Reminders list with N items). Grow toward 100–200.
+- **`tasks.py`** — **150 natural-language tasks** across real, complex apps (Pages,
+  Numbers, Keynote, Chrome/Safari, Maps, Preview, Freeform, Music, Weather, Stocks,
+  code editors, Notes/Reminders/Calendar, System Settings…), each with a programmatic
+  `verify()` (a Desktop file containing X, a Note titled Y, a Reminders list with N
+  items). No bare Calculator tasks. `SMOKE` is a 5-task subset for a quick check.
 - **`verifiers.py`** — reusable end-state checks (file / Notes / Reminders) + `manual()`.
 - **`runner.py`** — per task: clean slate → reset telemetry → run the agent headless via
   `claude -p` (your registered glance-cua MCP) → `verify()` → record correctness + the
   per-task efficiency the server logged.
-- **`report.py`** — scorecard (success rate + tokens/round-trips vs a naive loop) and a
-  regression diff against the previous run.
+- **`report.py`** — scorecard (success rate + tokens/round-trips vs a naive loop +
+  **total/per-task time** with the 3 slowest tasks) and a regression diff vs the
+  previous run. Time is a first-class metric — the loop optimizes for fast *and* cheap.
 - **`loop.py`** — ties it together and prints prioritized next actions.
 
 ## Run

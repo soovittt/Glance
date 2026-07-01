@@ -41,9 +41,13 @@ def score(results: list[TaskResult]) -> str:
         d = [r for r in auto if r.difficulty == diff]
         if d:
             lines.append(f"  {diff:8}    : {sum(r.ok for r in d)}/{len(d)} ({_pct(sum(r.ok for r in d), len(d))}%)")
+    total_time = sum(r.duration_s for r in results)
+    slowest = sorted(results, key=lambda r: -r.duration_s)[:3]
     lines += [
         f"round-trips   : {rt} vs naive ~{naive_rt}  ({_pct(naive_rt - rt, naive_rt)}% fewer)",
         f"tokens        : {tokens} vs naive ~{naive_tokens}  ({_pct(naive_tokens - tokens, naive_tokens)}% fewer)",
+        f"time          : {total_time / 60:.1f} min total, {total_time / max(len(results), 1):.1f}s/task avg",
+        "  slowest     : " + ", ".join(f"{r.id} {r.duration_s:.0f}s" for r in slowest),
     ]
     fails = [r for r in auto if not r.ok]
     if fails:

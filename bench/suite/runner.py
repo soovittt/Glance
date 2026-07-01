@@ -66,6 +66,7 @@ def run_task(task: Task, agent_cmd: list[str] = DEFAULT_AGENT, timeout: int = 30
 def run_suite(tasks: list[Task] = TASKS, agent_cmd: list[str] = DEFAULT_AGENT,
               timeout: int = 300) -> list[TaskResult]:
     results: list[TaskResult] = []
+    t0 = time.perf_counter()
     for i, t in enumerate(tasks, 1):
         print(f"[{i}/{len(tasks)}] {t.id} ...", flush=True)
         r = run_task(t, agent_cmd, timeout)
@@ -73,6 +74,11 @@ def run_suite(tasks: list[Task] = TASKS, agent_cmd: list[str] = DEFAULT_AGENT,
         print(f"    {status}  {r.detail}  ({r.round_trips} rt, {r.tokens} tok, {r.duration_s}s)",
               flush=True)
         results.append(r)
+    elapsed = time.perf_counter() - t0
+    passed = sum(r.ok for r in results if not r.manual)
+    auto = sum(1 for r in results if not r.manual)
+    print(f"\n=== {len(results)} tasks in {elapsed / 60:.1f} min "
+          f"({elapsed / max(len(results), 1):.1f}s/task) | passed {passed}/{auto} ===")
     _save(results)
     return results
 
