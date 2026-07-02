@@ -25,30 +25,50 @@ def desktop_file(name: str, contains: str | None = None, base: Path | None = Non
     return VerifyResult(True, f"{name} present" + (f" with {contains!r}" if contains else ""))
 
 
-def _osa(script: str) -> str | None:
+_PREFLIGHT = "run `python -m bench.suite.preflight` and approve the dialogs"
+
+
+def _osa(script: str) -> tuple[str, str]:
+    """Run AppleScript -> (stdout, error_kind). error_kind is '' on success, 'perm' if
+    macOS blocked automation (-1743 / Not authorized), or 'fail' for any other error.
+
+    Distinguishing 'perm' matters: a permission gap must NOT masquerade as a wrong
+    answer — it means "couldn't check", which the verifier reports as manual, not fail.
+    """
     try:
         r = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=8, text=True)
-        return (r.stdout or "").strip() if r.returncode == 0 else None
     except (subprocess.TimeoutExpired, OSError):
-        return None
+        return "", "fail"
+    if r.returncode == 0:
+        return (r.stdout or "").strip(), ""
+    err = r.stderr or ""
+    return "", ("perm" if ("-1743" in err or "Not authorized" in err) else "fail")
 
 
 def note_exists(title: str, min_chars: int = 0) -> VerifyResult:
-    """A Notes note with `title` exists (and is at least `min_chars` long)."""
+    """A Notes note named `title` exists (matched across accounts/folders), optionally at
+    least `min_chars` long. Permission-denied -> manual (excluded from the success rate)."""
     safe = title.replace('"', '\\"')
-    body = _osa(f'tell application "Notes" to get body of note "{safe}"')
-    if body is None:
+    out, err = _osa(f'tell application "Notes" to return (count (notes whose name is "{safe}"))')
+    if err == "perm":
+        return VerifyResult(False, f"Notes automation not authorized — {_PREFLIGHT}", manual=True)
+    if err or not out or out == "0":
         return VerifyResult(False, f'note "{title}" not found')
-    if len(body) < min_chars:
-        return VerifyResult(False, f'note "{title}" is too short ({len(body)} < {min_chars})')
+    if min_chars:
+        body, berr = _osa(f'tell application "Notes" to get body of (first note whose name is "{safe}")')
+        if not berr and len(body) < min_chars:
+            return VerifyResult(False, f'note "{title}" is too short ({len(body)} < {min_chars})')
     return VerifyResult(True, f'note "{title}" exists')
 
 
 def reminder_list(name: str, min_items: int = 1) -> VerifyResult:
-    """A Reminders list `name` exists with at least `min_items` reminders."""
+    """A Reminders list `name` exists with at least `min_items` reminders. Permission-denied
+    -> manual (excluded from the success rate)."""
     safe = name.replace('"', '\\"')
-    out = _osa(f'tell application "Reminders" to count reminders in list "{safe}"')
-    if out is None:
+    out, err = _osa(f'tell application "Reminders" to count reminders in list "{safe}"')
+    if err == "perm":
+        return VerifyResult(False, f"Reminders automation not authorized — {_PREFLIGHT}", manual=True)
+    if err:
         return VerifyResult(False, f'reminders list "{name}" not found')
     try:
         n = int(out)

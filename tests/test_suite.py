@@ -37,6 +37,28 @@ def test_manual_is_flagged():
     assert r.manual and not r.ok
 
 
+def test_note_verifier_permission_gap_is_manual_not_fail(monkeypatch):
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("", "perm"))
+    r = verifiers.note_exists("Groceries")
+    assert r.manual and not r.ok                       # can't check != wrong answer
+
+
+def test_note_verifier_found_vs_missing(monkeypatch):
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("1", ""))
+    assert verifiers.note_exists("Groceries").ok
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("0", ""))
+    assert not verifiers.note_exists("Groceries").ok
+
+
+def test_reminder_verifier_counts_and_permission(monkeypatch):
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("4", ""))
+    assert verifiers.reminder_list("Trip", 4).ok
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("2", ""))
+    assert not verifiers.reminder_list("Trip", 4).ok   # too few
+    monkeypatch.setattr(verifiers, "_osa", lambda s: ("", "perm"))
+    assert verifiers.reminder_list("Trip", 4).manual
+
+
 def test_score_reports_success_rate_and_excludes_manual():
     results = [_result("a", True), _result("b", False), _result("c", True, manual=True)]
     out = report.score(results)
