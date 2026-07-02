@@ -40,7 +40,23 @@ def probe(app: str, script: str) -> str:
     return f"ERROR ({err.strip()[:80]})"
 
 
+def prep_environment() -> None:
+    """Environment tweaks that remove avoidable task friction. Currently: make TextEdit
+    default to PLAIN TEXT, so 'save as X.txt' doesn't fight Rich Text -> .rtf (the root
+    cause of the text_06 timeout and text_10 content miss). Revert with:
+        defaults write com.apple.TextEdit RichText -bool true
+    """
+    try:
+        subprocess.run(["defaults", "write", "com.apple.TextEdit", "RichText", "-bool", "false"],
+                       capture_output=True, timeout=10)
+        print("  TextEdit      : set to plain-text default (avoids .rtf save friction)")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"  TextEdit      : could not set plain-text default ({e})")
+
+
 def main() -> None:
+    print("=== preflight: environment prep ===")
+    prep_environment()
     print("=== preflight: macOS automation permissions (verifiers need these) ===")
     results = {app: probe(app, script) for app, script in PROBES.items()}
     for app, res in results.items():
