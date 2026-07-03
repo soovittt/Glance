@@ -17,6 +17,12 @@ a change is only kept if the success rate holds.
 - **`report.py`** — scorecard (success rate + tokens/round-trips vs a naive loop +
   **total/per-task time** with the 3 slowest tasks + agent-error/timeout counts) and a
   regression diff vs the previous run. Time is a first-class metric.
+- **`catalog.py`** — a **~1000-task corpus across 60 apps** (After Effects, Premiere,
+  Media Encoder, CapCut, Screen Studio, iMovie, GarageBand, Photos, browsers, iWork,
+  code editors, TablePlus/Postman/Docker/Xcode, and every native app), generated from
+  compact per-app banks + parametric families. `python -m bench.suite.catalog --dump`
+  writes `results/catalog.md` + `.json`. Run it with `--catalog`:
+  `python -m bench.suite.loop --catalog`. Creative/app-internal results verify `manual`.
 - **`analyze.py`** — deep-dive a run's **per-task trajectories**: for each failure, the
   glance-cua tool sequence, the agent-level error, and the agent's own transcript tail
   ("got stuck on the template chooser") — so you can see *why* it failed, not just that

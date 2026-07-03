@@ -101,6 +101,17 @@ def test_analyze_shows_failures_with_trajectory(tmp_path):
     assert "t2" in analyze.analyze(d, failures_only=False)
 
 
+def test_catalog_builds_large_unique_and_verifiable():
+    from bench.suite.catalog import build
+    tasks = build()
+    assert len(tasks) >= 900                           # the ~1000-task corpus
+    ids = [t.id for t in tasks]
+    assert len(ids) == len(set(ids))                   # no duplicate ids
+    assert all(callable(t.verify) for t in tasks)      # every task is checkable/manual
+    apps = {t.id.rsplit("_", 1)[0] for t in tasks}
+    assert len(apps) >= 40                              # broad app coverage
+
+
 def test_simulate_result_is_deterministic_and_shaped():
     t = runner.TASKS[0]
     a, b = runner.simulate_result(t, 0), runner.simulate_result(t, 0)

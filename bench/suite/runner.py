@@ -200,8 +200,14 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--simulate", action="store_true",
                     help="dry-run the harness with synthetic results (no agent, no screen)")
+    ap.add_argument("--catalog", action="store_true",
+                    help="run the ~1000-task catalog (all apps) instead of the 150-task suite")
     args = ap.parse_args()
-    tasks = TASKS
+    if args.catalog:
+        from .catalog import build
+        tasks = build()
+    else:
+        tasks = TASKS
     if args.ids:
         wanted = {s.strip() for s in args.ids.split(",")}
         tasks = [t for t in TASKS if t.id in wanted]

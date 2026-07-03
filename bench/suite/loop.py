@@ -47,6 +47,8 @@ def main() -> None:
                     help="report on the latest saved run without re-running the suite")
     ap.add_argument("--simulate", action="store_true",
                     help="dry-run the harness with synthetic results (no agent, no screen)")
+    ap.add_argument("--catalog", action="store_true",
+                    help="run the ~1000-task catalog (all apps) instead of the 150-task suite")
     args = ap.parse_args()
 
     if args.no_run:
@@ -54,6 +56,9 @@ def main() -> None:
         if not r:
             raise SystemExit("no runs yet — drop --no-run to run the suite first")
         results = report.load_results(r[-1])
+    elif args.catalog:
+        from .catalog import build
+        results = run_suite(tasks=build(), simulate=args.simulate)
     else:
         results = run_suite(simulate=args.simulate)
 
